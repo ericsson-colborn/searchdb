@@ -1,4 +1,5 @@
 use tantivy::collector::TopDocs;
+use tantivy::directory::RamDirectory;
 use tantivy::query::QueryParser;
 use tantivy::schema::Value;
 use tantivy::{Index, TantivyDocument};
@@ -120,6 +121,31 @@ pub fn get_by_id(index: &Index, doc_id: &str) -> Result<Option<serde_json::Value
         }
         None => Ok(None),
     }
+}
+
+/// Build a temporary in-memory tantivy index from JSON rows.
+///
+/// Used for searching un-indexed Delta gap rows with full query syntax
+/// and proper BM25 scoring. The index lives in RamDirectory and is
+/// dropped when the caller discards it.
+pub fn build_ephemeral_index(app_schema: &Schema, rows: &[serde_json::Value]) -> Result<Index> {
+    let tv_schema = app_schema.build_tantivy_schema();
+    let dir = RamDirectory::create();
+    let index = Index::create(dir, tv_schema.clone(), tantivy::IndexSettings::default())?;
+    let mut writer = index.writer(15_000_000)?; // Tantivy minimum is 15MB
+
+    let id_field = tv_schema
+        .get_field("_id")
+        .map_err(|_| SearchDbError::Schema("missing _id field".into()))?;
+
+    for row in rows {
+        let doc_id = crate::writer::make_doc_id(row);
+        let doc = crate::writer::build_document(&tv_schema, app_schema, row, &doc_id)?;
+        crate::writer::upsert_document(&writer, id_field, doc, &doc_id);
+    }
+
+    writer.commit()?;
+    Ok(index)
 }
 
 /// Convert a tantivy document to a SearchHit using _source.
@@ -301,5 +327,45 @@ mod tests {
 
         let offset = search(&index, &schema, "+__present__:__all__", 10, 2, None, false).unwrap();
         assert_eq!(offset.len(), 1);
+    }
+
+    #[test]
+    fn test_build_ephemeral_index() {
+        let schema = Schema {
+            fields: BTreeMap::from([
+                ("name".into(), FieldType::Keyword),
+                ("notes".into(), FieldType::Text),
+            ]),
+        };
+
+        let rows = vec![
+            serde_json::json!({"_id": "d1", "name": "glucose", "notes": "fasting sample"}),
+            serde_json::json!({"_id": "d2", "name": "a1c", "notes": "borderline diabetic"}),
+        ];
+
+        let index = build_ephemeral_index(&schema, &rows).unwrap();
+        let reader = index.reader().unwrap();
+        let searcher = reader.searcher();
+        assert_eq!(searcher.num_docs(), 2);
+    }
+
+    #[test]
+    fn test_ephemeral_index_supports_query() {
+        let schema = Schema {
+            fields: BTreeMap::from([
+                ("name".into(), FieldType::Keyword),
+                ("notes".into(), FieldType::Text),
+            ]),
+        };
+
+        let rows = vec![
+            serde_json::json!({"_id": "d1", "name": "glucose", "notes": "fasting sample"}),
+            serde_json::json!({"_id": "d2", "name": "a1c", "notes": "borderline diabetic"}),
+        ];
+
+        let index = build_ephemeral_index(&schema, &rows).unwrap();
+        let results = search(&index, &schema, "notes:diabetes", 10, 0, None, false).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].doc["_id"], "d2");
     }
 }
