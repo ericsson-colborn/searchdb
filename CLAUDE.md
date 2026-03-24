@@ -4,39 +4,45 @@
 
 SearchDB is what happens when Delta Lake, DuckDB, and Tantivy have a baby. It combines the philosophy of DuckDB (embedded, zero-config, single binary, just works), the architecture of Delta Lake (append-only, versioned, tiered compaction), and the power of Tantivy (full-text search with BM25 scoring).
 
-**The pitch:** Point it at JSON or blob storage and you're searching in minutes. No cluster, no daemon, no configuration. The index is a disposable cache that builds itself lazily from Delta Lake. Zero to search in under 5 minutes.
+**The pitch:** Point it at JSON or blob storage and you're searching in minutes. No cluster, no daemon, no configuration. The index is a disposable cache that builds itself from Delta Lake. Zero to search in under 5 minutes.
 
 **The story:** Elasticsearch is powerful but operationally heavy — clusters, JVM tuning, replication, split brain. For teams that already have data in a lakehouse (Delta Lake on S3/GCS/Azure), running a search cluster alongside it is redundant infrastructure. SearchDB lets you search your lake directly: the lake is the source of truth, the index is a cache, and compaction happens in the background.
 
 ## Architecture
 
-### The Two Tiers
+### Client/Worker Split
 
-SearchDB uses Delta Lake as the buffer and tantivy as the index. Un-indexed data lives in Delta (Parquet files); indexed data lives in tantivy segments. Queries search both tiers and merge results.
-
-```
-Query arrives:
-  1. Search tantivy index (fast, covers data up to index_version)
-  2. Read Delta gap: rows_added_since(index_version) → Parquet files
-  3. Build ephemeral in-memory tantivy index from gap rows
-  4. Merge results, dedup by _id (gap wins — newer data)
-  5. Return results
-  6. If gap > threshold → fire-and-forget background sync
-```
-
-No write lock during queries. Concurrent queries never block each other. Background promotion creates new tantivy segments — never rebuilds the full index.
-
-### Tiered Segment Compaction (target architecture)
-
-Instead of all-or-nothing index rebuilds, leverage tantivy's native segment model:
+Like DuckDB, there is **no HTTP server**. Clients and workers are both CLI commands that interface directly with the underlying index files and storage. This is a fundamental departure from Elasticsearch's architecture.
 
 ```
-Small gap arrives    →  Create a new tantivy segment (fast, lightweight)
-Segments accumulate  →  Merge small segments periodically (tiered merge policy)
-Never rebuild        →  Always additive, compaction is just segment merging
+Client (read-only, no credentials needed):
+  searchdb search <name> -q <query>    → reads tantivy index directly
+  searchdb get <name> <doc_id>         → reads tantivy index directly
+  searchdb stats <name>                → reads index metadata
+
+Worker (writes, requires credentials):
+  searchdb compact <name>              → reads Delta, creates segments, merges
 ```
 
-This mirrors how Delta Lake handles compaction with OPTIMIZE — small files accumulate, periodic compaction merges them, but data is always queryable at every stage.
+**Clients never write.** They read the tantivy index on disk. No Delta access, no credentials.
+
+**Workers handle all writes.** The compaction worker reads Delta, creates tantivy segments, and merges them. This retains separation of concerns: don't trust the client. Workers need credentials for blob storage access.
+
+### Tiered Segment Compaction
+
+Two levels of compaction, both configurable:
+
+```
+Level 1 — Segmentation (after n entries):
+  New Delta rows arrive → Worker creates a new tantivy segment
+  Fast, lightweight. Never rebuilds the full index.
+
+Level 2 — Merge (after m minutes):
+  Accumulated segments → Worker merges into consolidated index
+  Keeps total segment count bounded. Runs on a schedule.
+```
+
+Both n and m are configurable. All compaction is **atomic** — if the worker crashes mid-compaction, the index is unchanged. This mirrors Delta Lake's OPTIMIZE and LSM-tree compaction strategies.
 
 ### Quickwit-Derived Components (planned)
 
@@ -44,38 +50,48 @@ Surgical borrows from [quickwit](https://github.com/quickwit-oss/quickwit) (~2K 
 
 1. **ES DSL → Tantivy query compilation** — Accept Elasticsearch-compatible query DSL, compile to tantivy queries. Enables drop-in ES replacement for read paths.
 2. **Object storage directory** — Tantivy `Directory` trait over S3/GCS/Azure. Search directly from blob storage without local copies.
-3. **Tiered merge policy** — Smarter segment merging than tantivy's default LogMergePolicy. Compaction workers that run on a schedule rather than inline.
+3. **Tiered merge policy** — Smarter segment merging than tantivy's default LogMergePolicy.
 
 ### Design Principles
 
-1. **Serverless.** No daemon. Every operation is a CLI invocation. Background promotion is a fire-and-forget child process.
-2. **Index-on-the-fly.** Users don't think about indexing. Queries always return fresh results.
-3. **Delta is the buffer.** No intermediate files. The gap between `index_version` and Delta HEAD is the un-indexed tier.
-4. **Dumb, reliable architecture.** Dedup at read time. Duplicate work over coordination.
-5. **Single binary, zero deps.** `cargo build --release` produces one binary. No Python, no pip, no runtime.
+1. **Serverless.** No daemon, no HTTP server. CLI commands against shared storage.
+2. **Client/worker separation.** Clients read. Workers write. Workers need credentials.
+3. **Tiered compaction.** New entries → segment. Accumulated segments → merge. Never full rebuild.
+4. **Schema is optional.** Infer types dynamically from data (like ES dynamic mapping). Strings → keyword, numbers → numeric, ISO timestamps → date.
+5. **Atomic operations.** All compaction is crash-safe. Index is always in a valid state.
+6. **Single binary, zero deps.** `cargo build --release` produces one binary.
 
 ## Commands
 
 ```
-searchdb new <name> --schema <json>       # Create index from schema declaration
+searchdb new <name> [--schema <json>]     # Create index (schema optional — infer from data)
 searchdb index <name> [-f file.ndjson]    # Bulk index NDJSON (stdin or file)
-searchdb search <name> -q <query>         # Search (reads Delta gap + index)
-searchdb serve <name> [--port 3000]       # HTTP search server (planned)
-searchdb connect-delta <name> --source <uri> --schema <json>  # Attach Delta source + initial load
-searchdb sync <name>                      # Promote gap into index (exits silently if locked)
-searchdb reindex <name> [--as-of-version N]  # Full rebuild from Delta
-searchdb get <name> <doc_id>              # Single doc by _id (gap-first lookup)
-searchdb stats <name>                     # Index stats + gap size
+searchdb search <name> -q <query>         # Search (reads index directly)
+searchdb get <name> <doc_id>              # Single doc by _id
+searchdb stats <name>                     # Index stats + segment count
 searchdb drop <name>                      # Delete index
+searchdb connect-delta <name> --source <uri> [--schema <json>]  # Attach Delta source
+searchdb compact <name> [--interval <m>]  # Run compaction worker (segment creation + merge)
+searchdb reindex <name> [--as-of-version N]  # Full rebuild from Delta (escape hatch)
 ```
 
 ## Schema
+
+### Explicit Schema (optional)
 
 4 field types map to tantivy config:
 - `keyword` → text field, `raw` tokenizer, stored (exact match)
 - `text` → text field, `en_stem` tokenizer, stored (full-text, stemmed)
 - `numeric` → f64 field, indexed + fast + stored (range queries)
 - `date` → date field, indexed + fast + stored (range queries)
+
+### Dynamic Schema (default when no schema specified)
+
+Infer types from data, like Elasticsearch's dynamic mapping:
+- JSON string → `keyword` (exact match by default)
+- JSON number → `numeric`
+- ISO 8601 string (regex match) → `date`
+- Explicit opt-in for `text` (full-text) via schema override
 
 ### Internal Fields (not user-visible in schema)
 
@@ -107,18 +123,19 @@ cargo fmt                       # Format
 - `tantivy 0.25` — search engine (IndexWriter, Searcher, Schema, RamDirectory)
 - `deltalake` — Delta Lake table access (async, needs tokio)
 - `clap 4` — CLI argument parsing (derive macros)
-- `axum` — HTTP server (planned, for `serve` command)
 - `serde/serde_json` — JSON serialization
 - `anyhow/thiserror` — error handling
 - `arrow/parquet` — reading Delta's Parquet files
 
 ### Async Bridging
 
-delta-rs is async (tokio). tantivy is sync. Use `#[tokio::main]` on the binary entry point. Delta-facing code is async; search/index operations are sync. The ephemeral in-memory index (RamDirectory) is built synchronously from gap rows.
+delta-rs is async (tokio). tantivy is sync. Use `#[tokio::main]` on the binary entry point. Delta-facing code is async; search/index operations are sync.
 
 ## Query Syntax
 
-Tantivy's native query parser (Lucene-like):
+### Tantivy Native (current)
+
+Lucene-like query parser:
 - `+field:"value"` — must match (keyword exact)
 - `field:term` — should match (text, stemmed)
 - `-field:"value"` — must not match
@@ -126,7 +143,9 @@ Tantivy's native query parser (Lucene-like):
 - `field:{100 TO *}` — range exclusive lower, open upper
 - `+__present__:__all__` — anchor for null-only queries
 
-**Planned:** Elasticsearch query DSL support via quickwit-query compilation layer.
+### Elasticsearch DSL (planned)
+
+Accept Elasticsearch query JSON body via `--dsl` flag or stdin. Compile to tantivy queries via quickwit-query.
 
 ## Coding Standards
 
@@ -141,22 +160,24 @@ Tantivy's native query parser (Lucene-like):
 
 ## Current State
 
-MVP complete with Delta-as-buffer architecture:
-- 9 CLI commands implemented
-- 38 passing tests
-- Two-tier search (persistent index + ephemeral gap index)
-- Fire-and-forget background promotion via `searchdb sync`
-- Zero write contention during queries
+MVP complete with two-tier search prototype. Transitioning to client/worker architecture.
+
+### What's Built
+- 9 CLI commands, 38 passing tests
+- Two-tier search (persistent index + ephemeral gap index) — prototype, being replaced by worker model
+- Delta Lake sync with file-level diffing
+- Schema declaration, 4 field types, 3 internal fields
+- CI/CD GitHub Actions workflows
+- Fire-and-forget background sync
+
+### Active Backlog
+1. ES DSL — Elasticsearch query DSL → tantivy compilation
+2. Segmentation — n entries → new segment (configurable, no full rebuild)
+3. Compaction — `searchdb compact` worker with configurable interval
+4. Access model — clients read-only, workers own writes
+5. Schema inference — optional schema, infer types dynamically
+6. Failure modes — all compaction atomic, crash-safe
 
 ### Specs and Plans
-
-- `docs/superpowers/specs/2026-03-24-buffer-promote-architecture-design.md` — Delta-as-buffer architecture
+- `docs/superpowers/specs/2026-03-24-buffer-promote-architecture-design.md` — Delta-as-buffer architecture (v1, being superseded by worker model)
 - `docs/superpowers/plans/2026-03-24-delta-as-buffer.md` — Implementation plan (completed)
-
-### Next Steps
-
-1. **Tiered segment compaction** — Replace all-or-nothing sync with segment-per-batch. Scheduled merges instead of inline rebuilds.
-2. **Quickwit ES DSL layer** — Accept Elasticsearch query DSL, compile to tantivy queries.
-3. **Object storage directory** — Tantivy Directory over S3/GCS/Azure from quickwit.
-4. **`searchdb serve`** — HTTP server with long-lived IndexWriter and timer-based promotion.
-5. **Delta delete detection** — Warn or handle rows deleted from Delta (currently silently ignored).
