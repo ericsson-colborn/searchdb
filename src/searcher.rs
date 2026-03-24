@@ -123,6 +123,32 @@ pub fn get_by_id(index: &Index, doc_id: &str) -> Result<Option<serde_json::Value
     }
 }
 
+/// Two-tier get: check gap rows first (by _id), fall back to persistent index.
+pub fn get_with_gap(
+    persistent_index: &Index,
+    doc_id: &str,
+    gap_rows: &[serde_json::Value],
+) -> Result<Option<serde_json::Value>> {
+    // Check gap first — newer data wins
+    for row in gap_rows {
+        if let Some(id) = row.get("_id").and_then(|v| v.as_str()) {
+            if id == doc_id {
+                let mut doc = row.clone();
+                if let Some(obj) = doc.as_object_mut() {
+                    obj.insert(
+                        "_id".to_string(),
+                        serde_json::Value::String(doc_id.to_string()),
+                    );
+                }
+                return Ok(Some(doc));
+            }
+        }
+    }
+
+    // Fall back to persistent index
+    get_by_id(persistent_index, doc_id)
+}
+
 /// Two-tier search: persistent index + ephemeral gap index, dedup by _id.
 ///
 /// Gap rows win over persistent index rows for the same _id (newer data).
@@ -524,5 +550,41 @@ mod tests {
         )
         .unwrap();
         assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_get_with_gap_found_in_gap() {
+        let dir = tempfile::tempdir().unwrap();
+        let (index, _, _) = setup_test_index(dir.path());
+
+        let gap_rows = vec![
+            serde_json::json!({"_id": "d1", "name": "UPDATED", "notes": "new version"}),
+        ];
+
+        let doc = get_with_gap(&index, "d1", &gap_rows).unwrap();
+        assert!(doc.is_some());
+        assert_eq!(doc.unwrap()["name"], "UPDATED");
+    }
+
+    #[test]
+    fn test_get_with_gap_falls_back_to_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let (index, _, _) = setup_test_index(dir.path());
+
+        let gap_rows =
+            vec![serde_json::json!({"_id": "d99", "name": "unrelated"})];
+
+        let doc = get_with_gap(&index, "d2", &gap_rows).unwrap();
+        assert!(doc.is_some());
+        assert_eq!(doc.unwrap()["_id"], "d2");
+    }
+
+    #[test]
+    fn test_get_with_gap_not_found_anywhere() {
+        let dir = tempfile::tempdir().unwrap();
+        let (index, _, _) = setup_test_index(dir.path());
+
+        let doc = get_with_gap(&index, "nonexistent", &[]).unwrap();
+        assert!(doc.is_none());
     }
 }
