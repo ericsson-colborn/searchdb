@@ -123,6 +123,91 @@ pub fn get_by_id(index: &Index, doc_id: &str) -> Result<Option<serde_json::Value
     }
 }
 
+/// Two-tier search: persistent index + ephemeral gap index, dedup by _id.
+///
+/// Gap rows win over persistent index rows for the same _id (newer data).
+/// Gap hits appear first (newer), then persistent hits by score.
+/// NOTE: BM25 scores are not comparable across indexes (different corpus stats),
+/// so we don't merge by score across tiers.
+#[allow(clippy::too_many_arguments)]
+pub fn search_with_gap(
+    persistent_index: &Index,
+    app_schema: &Schema,
+    query_str: &str,
+    limit: usize,
+    offset: usize,
+    fields: Option<&[String]>,
+    include_score: bool,
+    gap_rows: &[serde_json::Value],
+) -> Result<Vec<SearchHit>> {
+    if gap_rows.is_empty() {
+        return search(
+            persistent_index,
+            app_schema,
+            query_str,
+            limit,
+            offset,
+            fields,
+            include_score,
+        );
+    }
+
+    // 1. Build ephemeral index from gap rows
+    let gap_index = build_ephemeral_index(app_schema, gap_rows)?;
+
+    // 2. Search the gap index (collect all — gap is small by design)
+    let gap_hits = search(
+        &gap_index,
+        app_schema,
+        query_str,
+        gap_rows.len(),
+        0,
+        fields,
+        include_score,
+    )?;
+
+    // 3. Collect gap _ids for dedup
+    let gap_ids: std::collections::HashSet<String> = gap_hits
+        .iter()
+        .filter_map(|h| {
+            h.doc
+                .get("_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .collect();
+
+    // 4. Search persistent index, excluding gap _ids
+    let persistent_hits = search(
+        persistent_index,
+        app_schema,
+        query_str,
+        limit + offset,
+        0,
+        fields,
+        include_score,
+    )?;
+
+    let filtered_persistent: Vec<SearchHit> = persistent_hits
+        .into_iter()
+        .filter(|h| {
+            h.doc
+                .get("_id")
+                .and_then(|v| v.as_str())
+                .map(|id| !gap_ids.contains(id))
+                .unwrap_or(true)
+        })
+        .collect();
+
+    // 5. Gap hits first (newer data), then persistent hits (by score), paginate
+    let mut merged = gap_hits;
+    merged.extend(filtered_persistent);
+
+    let paginated: Vec<SearchHit> = merged.into_iter().skip(offset).take(limit).collect();
+
+    Ok(paginated)
+}
+
 /// Build a temporary in-memory tantivy index from JSON rows.
 ///
 /// Used for searching un-indexed Delta gap rows with full query syntax
@@ -367,5 +452,77 @@ mod tests {
         let results = search(&index, &schema, "notes:diabetes", 10, 0, None, false).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].doc["_id"], "d2");
+    }
+
+    #[test]
+    fn test_search_with_gap_dedup() {
+        let dir = tempfile::tempdir().unwrap();
+        let schema = Schema {
+            fields: BTreeMap::from([
+                ("name".into(), FieldType::Keyword),
+                ("notes".into(), FieldType::Text),
+            ]),
+        };
+        let tv_schema = schema.build_tantivy_schema();
+        let index = Index::create_in_dir(dir.path(), tv_schema.clone()).unwrap();
+        let mut w = index.writer(50_000_000).unwrap();
+        let id_field = tv_schema.get_field("_id").unwrap();
+
+        for doc_json in &[
+            serde_json::json!({"_id": "d1", "name": "glucose", "notes": "old version"}),
+            serde_json::json!({"_id": "d2", "name": "a1c", "notes": "unchanged"}),
+        ] {
+            let doc_id = writer::make_doc_id(doc_json);
+            let doc =
+                writer::build_document(&tv_schema, &schema, doc_json, &doc_id).unwrap();
+            writer::upsert_document(&w, id_field, doc, &doc_id);
+        }
+        w.commit().unwrap();
+
+        // Gap has updated d1 + new d3
+        let gap_rows = vec![
+            serde_json::json!({"_id": "d1", "name": "glucose", "notes": "NEW version"}),
+            serde_json::json!({"_id": "d3", "name": "creatinine", "notes": "kidney function"}),
+        ];
+
+        let results = search_with_gap(
+            &index,
+            &schema,
+            "+__present__:__all__",
+            10,
+            0,
+            None,
+            false,
+            &gap_rows,
+        )
+        .unwrap();
+
+        // Should have 3 docs: d1 (gap version), d2 (index), d3 (gap)
+        assert_eq!(results.len(), 3);
+
+        let d1 = results.iter().find(|h| h.doc["_id"] == "d1").unwrap();
+        assert_eq!(d1.doc["notes"], "NEW version"); // gap wins
+
+        assert!(results.iter().any(|h| h.doc["_id"] == "d2"));
+        assert!(results.iter().any(|h| h.doc["_id"] == "d3"));
+    }
+
+    #[test]
+    fn test_search_with_gap_empty_gap() {
+        let dir = tempfile::tempdir().unwrap();
+        let (index, schema, _) = setup_test_index(dir.path());
+
+        let results = search_with_gap(
+            &index,
+            &schema,
+            "+__present__:__all__",
+            10,
+            0,
+            None,
+            false,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(results.len(), 3);
     }
 }
