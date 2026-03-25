@@ -139,8 +139,35 @@ fn read_json_file(path: &str, batch_size: usize) -> Result<Vec<RecordBatch>> {
     )
 }
 
-fn read_csv_file(_path: &str, _batch_size: usize) -> Result<Vec<RecordBatch>> {
-    todo!("CSV reader — Task 5")
+/// Read a CSV file (with header row) into RecordBatches.
+fn read_csv_file(path: &str, batch_size: usize) -> Result<Vec<RecordBatch>> {
+    // Infer schema first
+    let format = arrow_csv::reader::Format::default().with_header(true);
+    let infer_file = File::open(path).map_err(SearchDbError::Io)?;
+    let (schema, _) = format
+        .infer_schema(infer_file, None)
+        .map_err(|e| SearchDbError::Schema(format!("Failed to infer CSV schema: {e}")))?;
+
+    // Build reader with inferred schema
+    let file = File::open(path).map_err(SearchDbError::Io)?;
+    let reader = arrow_csv::ReaderBuilder::new(std::sync::Arc::new(schema))
+        .with_header(true)
+        .with_batch_size(batch_size)
+        .build(file)
+        .map_err(|e| SearchDbError::Schema(format!("Failed to build CSV reader: {e}")))?;
+
+    let mut batches = Vec::new();
+    for batch_result in reader {
+        let batch = batch_result
+            .map_err(|e| SearchDbError::Schema(format!("Error reading CSV batch: {e}")))?;
+        batches.push(batch);
+    }
+
+    if batches.is_empty() {
+        return Err(SearchDbError::Schema("CSV file has no data rows".into()));
+    }
+
+    Ok(batches)
 }
 
 fn read_parquet_file(_path: &str) -> Result<Vec<RecordBatch>> {
@@ -209,6 +236,37 @@ mod tests {
     #[test]
     fn test_parse_format_invalid() {
         assert!(parse_format("xml").is_err());
+    }
+
+    #[test]
+    fn test_read_csv_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.csv");
+        std::fs::write(
+            &path,
+            "name,value,active\nglucose,95.0,true\na1c,6.1,false\n",
+        )
+        .unwrap();
+
+        let batches = read_file(path.to_str().unwrap(), InputFormat::Csv, 1024).unwrap();
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 2);
+
+        let schema = batches[0].schema();
+        assert!(schema.field_with_name("name").is_ok());
+        assert!(schema.field_with_name("value").is_ok());
+        assert!(schema.field_with_name("active").is_ok());
+    }
+
+    #[test]
+    fn test_read_csv_with_nulls() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nulls.csv");
+        std::fs::write(&path, "name,value\nglucose,95.0\na1c,\n").unwrap();
+
+        let batches = read_file(path.to_str().unwrap(), InputFormat::Csv, 1024).unwrap();
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 2);
     }
 
     #[test]
