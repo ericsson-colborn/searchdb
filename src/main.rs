@@ -1,5 +1,7 @@
 mod commands;
 #[cfg(feature = "delta")]
+mod compact;
+#[cfg(feature = "delta")]
 mod delta;
 mod error;
 mod schema;
