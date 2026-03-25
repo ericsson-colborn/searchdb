@@ -43,6 +43,15 @@ pub fn run(
                 stats["delta_version"] = serde_json::json!(delta_ver);
                 stats["gap_versions"] = serde_json::json!(gap_ver);
             }
+            if let Some(ref compact) = config.compact {
+                stats["compaction"] = serde_json::json!({
+                    "segment_size": compact.segment_size,
+                    "merge_interval_secs": compact.merge_interval_secs,
+                    "max_segments": compact.max_segments,
+                    "last_segment_at": compact.last_segment_at,
+                    "last_merge_at": compact.last_merge_at,
+                });
+            }
             println!("{}", serde_json::to_string(&stats)?);
         }
         OutputFormat::Text => {
@@ -62,6 +71,18 @@ pub fn run(
             }
             if let Some(ref src) = config.delta_source {
                 println!("Delta:      {src}");
+            }
+            if let Some(ref compact) = config.compact {
+                println!("Compaction:");
+                println!("  Segment size: {}", compact.segment_size);
+                println!("  Merge interval: {}s", compact.merge_interval_secs);
+                println!("  Max segments: {}", compact.max_segments);
+                if let Some(ref ts) = compact.last_segment_at {
+                    println!("  Last segment: {ts}");
+                }
+                if let Some(ref ts) = compact.last_merge_at {
+                    println!("  Last merge:   {ts}");
+                }
             }
         }
     }
@@ -101,6 +122,27 @@ mod tests {
         let reader = index.reader().unwrap();
         let searcher = reader.searcher();
         assert_eq!(searcher.num_docs(), 2);
+    }
+
+    #[test]
+    fn test_stats_with_compact_meta() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path().to_str().unwrap());
+        new_index::run(&storage, "test", r#"{"fields":{"name":"keyword"}}"#, false).unwrap();
+
+        // Manually inject compact metadata
+        let mut config = storage.load_config("test").unwrap();
+        config.compact = Some(crate::storage::CompactMeta {
+            segment_size: 50_000,
+            merge_interval_secs: 600,
+            max_segments: 20,
+            last_segment_at: Some("2026-03-24T14:30:00Z".into()),
+            last_merge_at: Some("2026-03-24T14:25:00Z".into()),
+        });
+        storage.save_config("test", &config).unwrap();
+
+        // Should not crash; verifies the compact metadata is read and displayed
+        run(&storage, "test", OutputFormat::Json, None).unwrap();
     }
 
     #[test]
