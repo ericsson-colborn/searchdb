@@ -709,4 +709,128 @@ mod tests {
         let rows = sync.full_load(None).await.unwrap();
         assert_eq!(rows.len(), 2);
     }
+
+    #[tokio::test]
+    async fn test_end_to_end_ndjson_ingest_to_delta() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create NDJSON source file
+        let source_path = dir.path().join("data.ndjson");
+        std::fs::write(
+            &source_path,
+            r#"{"_id":"d1","name":"glucose","value":95.0}
+{"_id":"d2","name":"a1c","value":6.1}
+{"_id":"d3","name":"creatinine","value":1.2}
+"#,
+        )
+        .unwrap();
+
+        // Ingest to Delta
+        let delta_path = dir.path().join("delta_out");
+        let delta_str = delta_path.to_str().unwrap();
+        let batches =
+            read_file(source_path.to_str().unwrap(), InputFormat::Ndjson, 1024).unwrap();
+        let version = write_delta(delta_str, batches, WriteMode::Overwrite)
+            .await
+            .unwrap();
+        assert!(version >= 0);
+
+        // Verify Delta table has the data
+        let sync = crate::delta::DeltaSync::new(delta_str);
+        let rows = sync.full_load(None).await.unwrap();
+        assert_eq!(rows.len(), 3);
+
+        // Verify we can read the Delta table's schema
+        let arrow_schema = sync.arrow_schema().await.unwrap();
+        assert!(arrow_schema.field_with_name("name").is_ok());
+        assert!(arrow_schema.field_with_name("value").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_end_to_end_csv_ingest_to_delta() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let source_path = dir.path().join("data.csv");
+        std::fs::write(&source_path, "name,value\nglucose,95.0\na1c,6.1\n").unwrap();
+
+        let delta_path = dir.path().join("delta_out");
+        let delta_str = delta_path.to_str().unwrap();
+        let batches = read_file(source_path.to_str().unwrap(), InputFormat::Csv, 1024).unwrap();
+        let version = write_delta(delta_str, batches, WriteMode::Overwrite)
+            .await
+            .unwrap();
+        assert!(version >= 0);
+
+        let sync = crate::delta::DeltaSync::new(delta_str);
+        let rows = sync.full_load(None).await.unwrap();
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_end_to_end_append_mode() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let delta_path = dir.path().join("delta_out");
+        let delta_str = delta_path.to_str().unwrap();
+
+        // First batch
+        let source1 = dir.path().join("batch1.ndjson");
+        std::fs::write(&source1, r#"{"name":"glucose","value":95.0}"#).unwrap();
+        let batches1 = read_file(source1.to_str().unwrap(), InputFormat::Ndjson, 1024).unwrap();
+        write_delta(delta_str, batches1, WriteMode::Overwrite)
+            .await
+            .unwrap();
+
+        // Append second batch
+        let source2 = dir.path().join("batch2.ndjson");
+        std::fs::write(&source2, r#"{"name":"a1c","value":6.1}"#).unwrap();
+        let batches2 = read_file(source2.to_str().unwrap(), InputFormat::Ndjson, 1024).unwrap();
+        write_delta(delta_str, batches2, WriteMode::Append)
+            .await
+            .unwrap();
+
+        let sync = crate::delta::DeltaSync::new(delta_str);
+        let rows = sync.full_load(None).await.unwrap();
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_multi_file_glob_ingest() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create multiple source files
+        std::fs::write(
+            dir.path().join("part1.ndjson"),
+            r#"{"name":"glucose","value":95.0}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("part2.ndjson"),
+            r#"{"name":"a1c","value":6.1}"#,
+        )
+        .unwrap();
+
+        // Expand glob
+        let pattern = format!("{}/*.ndjson", dir.path().to_str().unwrap());
+        let files = expand_source(&pattern).unwrap();
+        assert_eq!(files.len(), 2);
+
+        // Read all files
+        let mut all_batches = Vec::new();
+        for f in &files {
+            let batches = read_file(f, InputFormat::Ndjson, 1024).unwrap();
+            all_batches.extend(batches);
+        }
+
+        // Write to Delta
+        let delta_path = dir.path().join("delta_out");
+        let delta_str = delta_path.to_str().unwrap();
+        write_delta(delta_str, all_batches, WriteMode::Overwrite)
+            .await
+            .unwrap();
+
+        let sync = crate::delta::DeltaSync::new(delta_str);
+        let rows = sync.full_load(None).await.unwrap();
+        assert_eq!(rows.len(), 2);
+    }
 }
