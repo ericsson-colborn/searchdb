@@ -370,4 +370,262 @@ mod tests {
         assert!(!opts.force_merge);
         assert!(!opts.once);
     }
+
+    // --- Delta integration tests below ---
+
+    use arrow::array::{Float64Array, RecordBatch, StringArray};
+    use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
+    use deltalake::operations::create::CreateBuilder;
+    use deltalake::DeltaOps;
+    use std::sync::Arc;
+
+    fn test_arrow_schema() -> Arc<ArrowSchema> {
+        Arc::new(ArrowSchema::new(vec![
+            Field::new("_id", DataType::Utf8, false),
+            Field::new("name", DataType::Utf8, false),
+            Field::new("value", DataType::Float64, true),
+        ]))
+    }
+
+    fn make_batch(rows: &[(&str, &str, f64)]) -> RecordBatch {
+        let schema = test_arrow_schema();
+        let ids: Vec<&str> = rows.iter().map(|(id, _, _)| *id).collect();
+        let names: Vec<&str> = rows.iter().map(|(_, name, _)| *name).collect();
+        let values: Vec<f64> = rows.iter().map(|(_, _, val)| *val).collect();
+
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from(ids)),
+                Arc::new(StringArray::from(names)),
+                Arc::new(Float64Array::from(values)),
+            ],
+        )
+        .unwrap()
+    }
+
+    async fn create_delta_table(path: &str, rows: &[(&str, &str, f64)]) {
+        let schema = test_arrow_schema();
+        let batch = make_batch(rows);
+
+        let table = CreateBuilder::new()
+            .with_location(path)
+            .with_columns(
+                deltalake::kernel::StructType::try_from(schema.as_ref())
+                    .unwrap()
+                    .fields()
+                    .cloned(),
+            )
+            .await
+            .unwrap();
+
+        DeltaOps(table).write(vec![batch]).await.unwrap();
+    }
+
+    async fn append_to_delta(path: &str, rows: &[(&str, &str, f64)]) {
+        let batch = make_batch(rows);
+        let table = deltalake::open_table(path).await.unwrap();
+        DeltaOps(table).write(vec![batch]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_compact_once_creates_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let delta_path = dir.path().join("delta_table");
+        let delta_str = delta_path.to_str().unwrap();
+        let data_dir = dir.path().join("searchdb_data");
+        let data_str = data_dir.to_str().unwrap();
+
+        create_delta_table(delta_str, &[("d1", "glucose", 100.0), ("d2", "a1c", 5.7)]).await;
+
+        let storage = crate::storage::Storage::new(data_str);
+        crate::commands::connect_delta::run(
+            &storage,
+            "lab",
+            delta_str,
+            r#"{"fields":{"name":"keyword","value":"numeric"}}"#,
+        )
+        .await
+        .unwrap();
+
+        let index = tantivy::Index::open_in_dir(storage.tantivy_dir("lab")).unwrap();
+        let reader = index.reader().unwrap();
+        assert_eq!(reader.searcher().num_docs(), 2);
+
+        append_to_delta(
+            delta_str,
+            &[
+                ("d3", "creatinine", 1.2),
+                ("d4", "bun", 15.0),
+                ("d5", "sodium", 140.0),
+            ],
+        )
+        .await;
+
+        let opts = CompactOptions {
+            segment_size: 2,
+            once: true,
+            ..CompactOptions::default()
+        };
+        let worker = CompactWorker::new(&storage, "lab", opts);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        worker.run(rx).await.unwrap();
+
+        let index = tantivy::Index::open_in_dir(storage.tantivy_dir("lab")).unwrap();
+        let reader = index.reader().unwrap();
+        let searcher = reader.searcher();
+        assert_eq!(searcher.num_docs(), 5, "should have 5 total documents");
+
+        let segment_count = searcher.segment_readers().len();
+        assert!(
+            segment_count >= 2,
+            "should have at least 2 segments, got {segment_count}"
+        );
+
+        let config = storage.load_config("lab").unwrap();
+        assert!(config.compact.is_some(), "compact metadata should be saved");
+    }
+
+    #[tokio::test]
+    async fn test_compact_force_merge_reduces_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let delta_path = dir.path().join("delta_table");
+        let delta_str = delta_path.to_str().unwrap();
+        let data_dir = dir.path().join("searchdb_data");
+        let data_str = data_dir.to_str().unwrap();
+
+        create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
+
+        let storage = crate::storage::Storage::new(data_str);
+        crate::commands::connect_delta::run(
+            &storage,
+            "lab",
+            delta_str,
+            r#"{"fields":{"name":"keyword","value":"numeric"}}"#,
+        )
+        .await
+        .unwrap();
+
+        for i in 2..=6 {
+            append_to_delta(delta_str, &[(&format!("d{i}"), "test", i as f64)]).await;
+
+            let opts = CompactOptions {
+                segment_size: 1,
+                once: true,
+                ..CompactOptions::default()
+            };
+            let worker = CompactWorker::new(&storage, "lab", opts);
+            let (_tx, rx) = tokio::sync::watch::channel(false);
+            worker.run(rx).await.unwrap();
+        }
+
+        let index = tantivy::Index::open_in_dir(storage.tantivy_dir("lab")).unwrap();
+        let reader = index.reader().unwrap();
+        let before_merge = reader.searcher().segment_readers().len();
+        assert!(
+            before_merge > 1,
+            "should have multiple segments before force-merge, got {before_merge}"
+        );
+
+        let opts = CompactOptions {
+            force_merge: true,
+            ..CompactOptions::default()
+        };
+        let worker = CompactWorker::new(&storage, "lab", opts);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        worker.run(rx).await.unwrap();
+
+        let index = tantivy::Index::open_in_dir(storage.tantivy_dir("lab")).unwrap();
+        let reader = index.reader().unwrap();
+        let after_merge = reader.searcher().segment_readers().len();
+        assert_eq!(after_merge, 1, "should have 1 segment after force-merge");
+        assert_eq!(reader.searcher().num_docs(), 6);
+    }
+
+    #[tokio::test]
+    async fn test_compact_upsert_dedup() {
+        let dir = tempfile::tempdir().unwrap();
+        let delta_path = dir.path().join("delta_table");
+        let delta_str = delta_path.to_str().unwrap();
+        let data_dir = dir.path().join("searchdb_data");
+        let data_str = data_dir.to_str().unwrap();
+
+        create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
+
+        let storage = crate::storage::Storage::new(data_str);
+        crate::commands::connect_delta::run(
+            &storage,
+            "lab",
+            delta_str,
+            r#"{"fields":{"name":"keyword","value":"numeric"}}"#,
+        )
+        .await
+        .unwrap();
+
+        append_to_delta(delta_str, &[("d1", "glucose_updated", 200.0)]).await;
+
+        let opts = CompactOptions {
+            once: true,
+            ..CompactOptions::default()
+        };
+        let worker = CompactWorker::new(&storage, "lab", opts);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        worker.run(rx).await.unwrap();
+
+        let opts = CompactOptions {
+            force_merge: true,
+            ..CompactOptions::default()
+        };
+        let worker = CompactWorker::new(&storage, "lab", opts);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        worker.run(rx).await.unwrap();
+
+        let index = tantivy::Index::open_in_dir(storage.tantivy_dir("lab")).unwrap();
+        let reader = index.reader().unwrap();
+        assert_eq!(
+            reader.searcher().num_docs(),
+            1,
+            "upsert should keep only latest version"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_compact_writer_lock_detection() {
+        let dir = tempfile::tempdir().unwrap();
+        let delta_path = dir.path().join("delta_table");
+        let delta_str = delta_path.to_str().unwrap();
+        let data_dir = dir.path().join("searchdb_data");
+        let data_str = data_dir.to_str().unwrap();
+
+        create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
+
+        let storage = crate::storage::Storage::new(data_str);
+        crate::commands::connect_delta::run(
+            &storage,
+            "lab",
+            delta_str,
+            r#"{"fields":{"name":"keyword","value":"numeric"}}"#,
+        )
+        .await
+        .unwrap();
+
+        let index = tantivy::Index::open_in_dir(storage.tantivy_dir("lab")).unwrap();
+        let _writer: tantivy::IndexWriter<tantivy::TantivyDocument> =
+            index.writer(50_000_000).unwrap();
+
+        let opts = CompactOptions {
+            once: true,
+            ..CompactOptions::default()
+        };
+        let worker = CompactWorker::new(&storage, "lab", opts);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let result = worker.run(rx).await;
+        assert!(result.is_err());
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Another writer"),
+            "error should mention writer lock: {err_msg}"
+        );
+    }
 }
