@@ -1,12 +1,12 @@
-# SearchDB — Embedded Search for the Lakehouse
+# deltasearch — Embedded Search for the Lakehouse
 
 ## Vision
 
-SearchDB is what happens when Delta Lake, DuckDB, and Tantivy have a baby. It combines the philosophy of DuckDB (embedded, zero-config, single binary, just works), the architecture of Delta Lake (append-only, versioned, tiered compaction), and the power of Tantivy (full-text search with BM25 scoring).
+deltasearch is what happens when Delta Lake, DuckDB, and Tantivy have a baby. It combines the philosophy of DuckDB (embedded, zero-config, single binary, just works), the architecture of Delta Lake (append-only, versioned, tiered compaction), and the power of Tantivy (full-text search with BM25 scoring).
 
 **The pitch:** Point it at JSON or blob storage and you're searching in minutes. No cluster, no daemon, no configuration. The index is a disposable cache that builds itself from Delta Lake. Zero to search in under 5 minutes.
 
-**The story:** Elasticsearch is powerful but operationally heavy — clusters, JVM tuning, replication, split brain. For teams that already have data in a lakehouse (Delta Lake on S3/GCS/Azure), running a search cluster alongside it is redundant infrastructure. SearchDB lets you search your lake directly: the lake is the source of truth, the index is a cache, and compaction happens in the background.
+**The story:** Elasticsearch is powerful but operationally heavy — clusters, JVM tuning, replication, split brain. For teams that already have data in a lakehouse (Delta Lake on S3/GCS/Azure), running a search cluster alongside it is redundant infrastructure. deltasearch lets you search your lake directly: the lake is the source of truth, the index is a cache, and compaction happens in the background.
 
 ## Architecture
 
@@ -16,12 +16,12 @@ Like DuckDB, there is **no HTTP server**. Clients and workers are both CLI comma
 
 ```
 Client (read-only, no credentials needed):
-  searchdb search <name> -q <query>    → reads tantivy index directly
-  searchdb get <name> <doc_id>         → reads tantivy index directly
-  searchdb stats <name>                → reads index metadata
+  dsrch search <name> -q <query>    → reads tantivy index directly
+  dsrch get <name> <doc_id>         → reads tantivy index directly
+  dsrch stats <name>                → reads index metadata
 
 Worker (writes, requires credentials):
-  searchdb compact <name>              → reads Delta, creates segments, merges
+  dsrch compact <name>              → reads Delta, creates segments, merges
 ```
 
 **Clients never write.** They read the tantivy index on disk. No Delta access, no credentials.
@@ -64,15 +64,15 @@ Surgical borrows from [quickwit](https://github.com/quickwit-oss/quickwit) (~2K 
 ## Commands
 
 ```
-searchdb new <name> [--schema <json>]     # Create index (schema optional — infer from data)
-searchdb index <name> [-f file.ndjson]    # Bulk index NDJSON (stdin or file)
-searchdb search <name> -q <query>         # Search (reads index directly)
-searchdb get <name> <doc_id>              # Single doc by _id
-searchdb stats <name>                     # Index stats + segment count
-searchdb drop <name>                      # Delete index
-searchdb connect-delta <name> --source <uri> [--schema <json>]  # Attach Delta source
-searchdb compact <name> [--interval <m>]  # Run compaction worker (segment creation + merge)
-searchdb reindex <name> [--as-of-version N]  # Full rebuild from Delta (escape hatch)
+dsrch new <name> [--schema <json>]     # Create index (schema optional — infer from data)
+dsrch index <name> [-f file.ndjson]    # Bulk index NDJSON (stdin or file)
+dsrch search <name> -q <query>         # Search (reads index directly)
+dsrch get <name> <doc_id>              # Single doc by _id
+dsrch stats <name>                     # Index stats + segment count
+dsrch drop <name>                      # Delete index
+dsrch connect-delta <name> --source <uri> [--schema <json>]  # Attach Delta source
+dsrch compact <name> [--interval <m>]  # Run compaction worker (segment creation + merge)
+dsrch reindex <name> [--as-of-version N]  # Full rebuild from Delta (escape hatch)
 ```
 
 ## Schema
@@ -104,7 +104,7 @@ Infer types from data, like Elasticsearch's dynamic mapping:
 ```
 {data_dir}/
 ├── {index_name}/
-│   ├── searchdb.json    ← Schema + Delta source + index_version watermark
+│   ├── searchdb.json    ← Schema + Delta source + index_version watermark (legacy filename)
 │   └── index/           ← Tantivy segment files
 ```
 
@@ -113,7 +113,7 @@ Infer types from data, like Elasticsearch's dynamic mapping:
 ```bash
 cargo build                     # Debug build
 cargo build --release           # Release build
-cargo test                      # Run all tests (38 currently)
+cargo test                      # Run all tests
 cargo clippy -- -D warnings     # Lint (must pass)
 cargo fmt                       # Format
 ```
@@ -173,7 +173,7 @@ MVP complete with two-tier search prototype. Transitioning to client/worker arch
 ### Active Backlog
 1. ES DSL — Elasticsearch query DSL → tantivy compilation
 2. Segmentation — n entries → new segment (configurable, no full rebuild)
-3. Compaction — `searchdb compact` worker with configurable interval
+3. Compaction — `dsrch compact` worker with configurable interval
 4. Access model — clients read-only, workers own writes
 5. Schema inference — optional schema, infer types dynamically
 6. Failure modes — all compaction atomic, crash-safe

@@ -496,7 +496,7 @@ Expected: **Passes.** All existing tests still work because `inferred: false` pr
 
 ---
 
-## Task 6: Make `--schema` optional in `searchdb new`
+## Task 6: Make `--schema` optional in `dsrch new`
 
 **Files:**
 - Modify: `src/main.rs` -- change `schema: String` to `schema: Option<String>` in `New` variant
@@ -576,7 +576,7 @@ pub fn run(storage: &Storage, name: &str, schema_json: Option<&str>, overwrite: 
     storage.save_config(name, &config)?;
 
     eprintln!(
-        "[searchdb] Created index '{name}' with {} field(s){}",
+        "[dsrch] Created index '{name}' with {} field(s){}",
         config.schema.fields.len(),
         if inferred { " (schema will be inferred from data)" } else { "" }
     );
@@ -619,7 +619,7 @@ Expected: **Passes.** All tests green.
 
 ---
 
-## Task 7: Add schema inference to `searchdb index`
+## Task 7: Add schema inference to `dsrch index`
 
 **Files:**
 - Modify: `src/commands/index.rs` -- detect unknown fields, trigger evolution for inferred schemas
@@ -801,7 +801,7 @@ fn rebuild_index(storage: &Storage, name: &str, new_schema: &Schema) -> Result<(
     index_writer.commit()?;
 
     eprintln!(
-        "[searchdb] Rebuilt index '{name}' with {} existing document(s)",
+        "[dsrch] Rebuilt index '{name}' with {} existing document(s)",
         existing_docs.len()
     );
     Ok(())
@@ -821,7 +821,7 @@ pub fn run(storage: &Storage, name: &str, file: Option<&str>) -> Result<()> {
     // Read all input documents
     let new_docs = read_ndjson(file)?;
     if new_docs.is_empty() {
-        eprintln!("[searchdb] No documents to index");
+        eprintln!("[dsrch] No documents to index");
         return Ok(());
     }
 
@@ -832,7 +832,7 @@ pub fn run(storage: &Storage, name: &str, file: Option<&str>) -> Result<()> {
 
         if !new_fields.is_empty() {
             eprintln!(
-                "[searchdb] Schema evolution: discovered {} new field(s): {}",
+                "[dsrch] Schema evolution: discovered {} new field(s): {}",
                 new_fields.len(),
                 new_fields.join(", ")
             );
@@ -858,7 +858,7 @@ pub fn run(storage: &Storage, name: &str, file: Option<&str>) -> Result<()> {
     }
     index_writer.commit()?;
 
-    eprintln!("[searchdb] Indexed {count} document(s) into '{name}'");
+    eprintln!("[dsrch] Indexed {count} document(s) into '{name}'");
     Ok(())
 }
 
@@ -882,7 +882,7 @@ fn read_ndjson(file: Option<&str>) -> Result<Vec<serde_json::Value>> {
         }
         match serde_json::from_str(trimmed) {
             Ok(v) => docs.push(v),
-            Err(e) => eprintln!("[searchdb] Skipping invalid JSON: {e}"),
+            Err(e) => eprintln!("[dsrch] Skipping invalid JSON: {e}"),
         }
     }
     Ok(docs)
@@ -899,7 +899,7 @@ Expected: **Passes.** Full test suite green.
 
 ---
 
-## Task 8: Make `--schema` optional in `searchdb connect-delta`
+## Task 8: Make `--schema` optional in `dsrch connect-delta`
 
 **Files:**
 - Modify: `src/main.rs` -- change `schema: String` to `schema: Option<String>` in `ConnectDelta` variant
@@ -1005,7 +1005,7 @@ pub async fn run(
 
     let delta = DeltaSync::new(source);
     let version = delta.current_version().await?;
-    eprintln!("[searchdb] Delta table at version {version}");
+    eprintln!("[dsrch] Delta table at version {version}");
 
     let (schema, inferred) = match schema_json {
         Some(json) => (Schema::from_json(json)?, false),
@@ -1014,7 +1014,7 @@ pub async fn run(
             let arrow_schema = delta.arrow_schema().await?;
             let schema = crate::schema::from_arrow_schema(&arrow_schema);
             eprintln!(
-                "[searchdb] Inferred schema from Arrow: {} field(s)",
+                "[dsrch] Inferred schema from Arrow: {} field(s)",
                 schema.fields.len()
             );
             (schema, true)
@@ -1241,9 +1241,9 @@ Expected: **Passes.**
 | 3 | `infer_schema` for batch of documents | `src/schema.rs` |
 | 4 | `merge_schemas` + `merge_schemas_with_diff` | `src/schema.rs` |
 | 5 | `inferred` flag on `IndexConfig` | `src/storage.rs` |
-| 6 | `--schema` optional in `searchdb new` | `src/main.rs`, `src/commands/new_index.rs` |
-| 7 | Schema inference + evolution in `searchdb index` | `src/commands/index.rs` |
-| 8 | `--schema` optional in `searchdb connect-delta` | `src/main.rs`, `src/commands/connect_delta.rs`, `src/schema.rs` |
+| 6 | `--schema` optional in `dsrch new` | `src/main.rs`, `src/commands/new_index.rs` |
+| 7 | Schema inference + evolution in `dsrch index` | `src/commands/index.rs` |
+| 8 | `--schema` optional in `dsrch connect-delta` | `src/main.rs`, `src/commands/connect_delta.rs`, `src/schema.rs` |
 | 9 | Boolean-as-keyword verification | `src/writer.rs` |
 | 10 | End-to-end integration tests | `src/commands/index.rs` |
 | 11 | Partial schema override test | `src/commands/index.rs` |

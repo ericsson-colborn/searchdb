@@ -25,7 +25,7 @@ The fix is to decouple ingestion from consolidation. New rows become small, fast
 
 ### The Compact Worker
 
-`searchdb compact <name>` runs a long-lived event loop:
+`dsrch compact <name>` runs a long-lived event loop:
 
 ```
 loop {
@@ -152,7 +152,7 @@ The worker uses **manual merge triggering** on a timer, not tantivy's automatic 
 For operators who want to consolidate the index into a single segment (e.g., before a read-heavy workload), the compact command supports a one-shot mode:
 
 ```
-searchdb compact <name> --force-merge
+dsrch compact <name> --force-merge
 ```
 
 This merges all segments into one, then exits. It does not enter the polling loop. Useful as a maintenance operation.
@@ -160,7 +160,7 @@ This merges all segments into one, then exits. It does not enter the polling loo
 ## CLI Interface
 
 ```
-searchdb compact <name> [OPTIONS]
+dsrch compact <name> [OPTIONS]
 
 Options:
   --segment-size <N>       Rows per segment before commit (default: 10000)
@@ -170,30 +170,30 @@ Options:
   --max-segment-age <SEC>  Force commit after N seconds even if under threshold (default: 60)
   --force-merge            One-shot: merge all segments and exit
   --once                   One-shot: poll once, segment if needed, merge if needed, exit
-  --data-dir <DIR>         Data directory for indexes (default: .searchdb)
+  --data-dir <DIR>         Data directory for indexes (default: .dsrch)
 ```
 
 ### Examples
 
 ```bash
 # Run as a long-lived worker (production)
-searchdb compact labs --segment-size 50000 --merge-interval 10
+dsrch compact labs --segment-size 50000 --merge-interval 10
 
 # One-shot segment + merge (cron job)
-searchdb compact labs --once
+dsrch compact labs --once
 
 # Force-merge to single segment (maintenance)
-searchdb compact labs --force-merge
+dsrch compact labs --force-merge
 
 # High-throughput: larger segments, less frequent merges
-searchdb compact labs --segment-size 100000 --merge-interval 30 --max-segments 20
+dsrch compact labs --segment-size 100000 --merge-interval 30 --max-segments 20
 ```
 
 ## How This Replaces Existing Commands
 
-### `searchdb sync` -- Deprecated
+### `dsrch sync` -- Deprecated
 
-The current `sync` command is replaced by `searchdb compact --once`. The behavior is nearly identical (poll Delta, upsert new rows, commit), but compact adds:
+The current `sync` command is replaced by `dsrch compact --once`. The behavior is nearly identical (poll Delta, upsert new rows, commit), but compact adds:
 
 - Batch splitting for large gaps (sync would create one massive segment)
 - NoMergePolicy to prevent automatic merges from interfering
@@ -201,7 +201,7 @@ The current `sync` command is replaced by `searchdb compact --once`. The behavio
 
 The `sync` command will remain as an alias for `compact --once` during a transition period, then be removed.
 
-### `searchdb search` / `searchdb get` -- Simplified
+### `dsrch search` / `dsrch get` -- Simplified
 
 With the compact worker handling all writes, clients no longer need the two-tier gap search. The query path simplifies to:
 
@@ -219,15 +219,15 @@ With the compact worker handling all writes, clients no longer need the two-tier
 
 Clients need no Delta access and no credentials. The index is always reasonably fresh because the compact worker runs continuously. The `read_gap`, `search_with_gap`, `build_ephemeral_index`, and `maybe_spawn_sync` code paths can be removed from the client.
 
-### `searchdb reindex` -- Unchanged
+### `dsrch reindex` -- Unchanged
 
 Reindex remains as the escape hatch for full rebuilds. It destroys the tantivy index directory and rebuilds from Delta. The compact worker should be stopped before running reindex (it will fail to acquire the IndexWriter lock if the worker is running).
 
-### `searchdb connect-delta` -- Unchanged
+### `dsrch connect-delta` -- Unchanged
 
 Sets up the Delta source and performs the initial full load. After connect-delta completes, the operator starts the compact worker to keep the index current.
 
-### `searchdb stats` -- Enhanced
+### `dsrch stats` -- Enhanced
 
 Stats will report additional compaction metadata:
 
@@ -294,7 +294,7 @@ Tantivy's concurrency model is designed for exactly this pattern:
 
 ### Client Behavior During Compaction
 
-Clients (`searchdb search`, `searchdb get`) open the tantivy index with `Index::open_in_dir()` and create a reader. The reader picks up whatever segments exist in `meta.json` at that moment. If the compact worker commits a new segment between two client invocations, the second client sees the new data. If a commit happens during a client's search, the client sees the old snapshot -- consistent, just slightly stale.
+Clients (`dsrch search`, `dsrch get`) open the tantivy index with `Index::open_in_dir()` and create a reader. The reader picks up whatever segments exist in `meta.json` at that moment. If the compact worker commits a new segment between two client invocations, the second client sees the new data. If a commit happens during a client's search, the client sees the old snapshot -- consistent, just slightly stale.
 
 There is no lock contention between the compact worker and clients. The IndexWriter holds a write lock (via a lockfile in the index directory) that prevents other writers, but readers never contend with it.
 
@@ -303,7 +303,7 @@ There is no lock contention between the compact worker and clients. The IndexWri
 Only one compact worker can run per index. The tantivy `IndexWriter` acquires a file-based lock on creation. If a second worker attempts to start, `Index::writer()` returns `TantivyError::LockFailure`. The worker should detect this and exit with a clear error message:
 
 ```
-[searchdb] Error: another compact worker is already running for index 'labs'
+[dsrch] Error: another compact worker is already running for index 'labs'
 ```
 
 ## On-Disk Layout Changes
@@ -335,14 +335,14 @@ The compact worker is a long-lived process, not a daemon. Run it under a process
 
 ```bash
 # systemd, supervisord, or just a terminal
-searchdb compact labs --segment-size 50000 --merge-interval 10
+dsrch compact labs --segment-size 50000 --merge-interval 10
 ```
 
 For simpler deployments (cron), use `--once`:
 
 ```bash
 # Every minute via cron
-* * * * * searchdb compact labs --once --data-dir /data/searchdb
+* * * * * dsrch compact labs --once --data-dir /data/searchdb
 ```
 
 ### Monitoring
@@ -350,12 +350,12 @@ For simpler deployments (cron), use `--once`:
 The worker logs to stderr with structured messages:
 
 ```
-[searchdb] compact: polling Delta... HEAD=345, index=342, gap=3 versions
-[searchdb] compact: read 1,247 rows from Delta v342..v345
-[searchdb] compact: committed segment (1,247 docs), now at Delta v345
-[searchdb] compact: merge check: 12 segments, threshold=10, merging...
-[searchdb] compact: merged 8 segments into 1 (47,832 docs), 5 segments remaining
-[searchdb] compact: idle, next poll in 10s
+[dsrch] compact: polling Delta... HEAD=345, index=342, gap=3 versions
+[dsrch] compact: read 1,247 rows from Delta v342..v345
+[dsrch] compact: committed segment (1,247 docs), now at Delta v345
+[dsrch] compact: merge check: 12 segments, threshold=10, merging...
+[dsrch] compact: merged 8 segments into 1 (47,832 docs), 5 segments remaining
+[dsrch] compact: idle, next poll in 10s
 ```
 
 ### Graceful Shutdown
@@ -387,8 +387,8 @@ Clients (search, get) never access Delta and need no credentials.
 
 ### Phase 2: Default to compact
 
-- `searchdb connect-delta` prints a message: "Run `searchdb compact <name>` to keep the index current."
-- `searchdb sync` becomes an alias for `compact --once` and prints a deprecation warning.
+- `dsrch connect-delta` prints a message: "Run `dsrch compact <name>` to keep the index current."
+- `dsrch sync` becomes an alias for `compact --once` and prints a deprecation warning.
 - search/get still support gap-at-query-time but log a hint if gap > 0: "Consider running a compact worker."
 
 ### Phase 3: Remove gap-at-query-time
@@ -401,7 +401,7 @@ Clients (search, get) never access Delta and need no credentials.
 
 ### Core Functionality
 
-- [ ] `searchdb compact <name>` starts a long-lived worker that polls Delta, creates segments, and merges them.
+- [ ] `dsrch compact <name>` starts a long-lived worker that polls Delta, creates segments, and merges them.
 - [ ] Each commit creates exactly one new tantivy segment (NoMergePolicy is active).
 - [ ] Segments are created when accumulated rows reach `--segment-size` or `--max-segment-age` seconds elapse.
 - [ ] Large Delta gaps are split into multiple segments of at most `segment_size` rows.
@@ -426,9 +426,9 @@ Clients (search, get) never access Delta and need no credentials.
 ### Observability
 
 - [ ] Worker logs poll results, segment commits, merge operations, and idle periods to stderr.
-- [ ] `searchdb stats` reports segment count, index_version, delta_version, and gap size.
+- [ ] `dsrch stats` reports segment count, index_version, delta_version, and gap size.
 
 ### Backward Compatibility
 
 - [ ] Existing indexes created by `connect-delta` + `sync` work with the compact worker without migration.
-- [ ] `searchdb sync` continues to work during the transition period.
+- [ ] `dsrch sync` continues to work during the transition period.

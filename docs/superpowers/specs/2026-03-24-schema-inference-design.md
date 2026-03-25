@@ -1,13 +1,13 @@
-# Schema Inference for SearchDB
+# Schema Inference for deltasearch
 
 **Date:** 2026-03-24
 **Status:** Draft
 
 ## Problem
 
-SearchDB currently requires an explicit `--schema` argument for `searchdb new` and `searchdb connect-delta`. Users must know their field types upfront and declare them in JSON before they can index any data. This creates unnecessary friction for the common case: "I have some JSON, I want to search it."
+deltasearch currently requires an explicit `--schema` argument for `dsrch new` and `dsrch connect-delta`. Users must know their field types upfront and declare them in JSON before they can index any data. This creates unnecessary friction for the common case: "I have some JSON, I want to search it."
 
-Elasticsearch solves this with dynamic mapping: throw documents at it and it figures out the types. SearchDB should do the same. Schema becomes optional. When omitted, field types are inferred from the data itself.
+Elasticsearch solves this with dynamic mapping: throw documents at it and it figures out the types. deltasearch should do the same. Schema becomes optional. When omitted, field types are inferred from the data itself.
 
 ## Design Principles
 
@@ -73,22 +73,22 @@ JSON booleans are stored as keyword strings (`"true"` / `"false"`). This keeps t
 
 Schema inference activates in four scenarios, listed in order of preference:
 
-### 0. `searchdb new --infer-from <file>` (PRIMARY — User-Directed Inference)
+### 0. `dsrch new --infer-from <file>` (PRIMARY — User-Directed Inference)
 
-The recommended path for most users. Provide a sample file and let SearchDB figure out the types:
+The recommended path for most users. Provide a sample file and let deltasearch figure out the types:
 
 ```bash
 # Infer schema from a sample NDJSON file
-searchdb new labs --infer-from data/sample.ndjson
+dsrch new labs --infer-from data/sample.ndjson
 
 # Preview the inferred schema without creating anything
-searchdb new labs --infer-from data/sample.ndjson --dry-run
+dsrch new labs --infer-from data/sample.ndjson --dry-run
 # prints: {"fields":{"name":"keyword","age":"numeric","created":"date"}}
 
 # Preview, tweak, then create with overrides
-searchdb new labs --infer-from data/sample.ndjson --dry-run
+dsrch new labs --infer-from data/sample.ndjson --dry-run
 # user sees "notes" was inferred as keyword, wants text
-searchdb new labs --infer-from data/sample.ndjson --schema '{"fields":{"notes":"text"}}'
+dsrch new labs --infer-from data/sample.ndjson --schema '{"fields":{"notes":"text"}}'
 ```
 
 **`--infer-from <path>`**: Read the file, infer field types from all rows, create the index with the inferred schema. The file is not indexed — just used for inference. Index starts empty.
@@ -97,13 +97,13 @@ searchdb new labs --infer-from data/sample.ndjson --schema '{"fields":{"notes":"
 
 **`--infer-from` + `--schema` (combined)**: The `--schema` acts as an override — declared fields use the explicit type, other fields are inferred from the file. This is the recommended way to mark specific fields as `text` instead of the default `keyword`.
 
-### 1. `searchdb new` Without `--schema` and Without `--infer-from`
+### 1. `dsrch new` Without `--schema` and Without `--infer-from`
 
-- If neither `--schema` nor `--infer-from` is provided: create the index with an empty schema (`{"fields": {}}`). The schema will be populated on first `searchdb index` call via schema evolution.
+- If neither `--schema` nor `--infer-from` is provided: create the index with an empty schema (`{"fields": {}}`). The schema will be populated on first `dsrch index` call via schema evolution.
 
 An empty-schema index is valid. It has the three internal fields (`_id`, `_source`, `__present__`) and no user fields. Documents indexed into it trigger schema inference and evolution.
 
-### 2. `searchdb index` With Schema Evolution
+### 2. `dsrch index` With Schema Evolution
 
 When indexing NDJSON into an index whose schema does not cover all fields in the incoming documents:
 
@@ -114,22 +114,22 @@ When indexing NDJSON into an index whose schema does not cover all fields in the
 
 See "Schema Evolution and Tantivy Immutability" below for the rebuild strategy.
 
-### 3. `searchdb connect-delta` Without `--schema` (Auto-Inference from Arrow)
+### 3. `dsrch connect-delta` Without `--schema` (Auto-Inference from Arrow)
 
 When connecting to a Delta Lake table without `--schema`, the Delta table's Arrow schema is used directly — no sample file needed:
 
 ```bash
 # Schema inferred automatically from Delta table metadata
-searchdb connect-delta labs --source /data/labs
+dsrch connect-delta labs --source /data/labs
 
 # Preview what would be inferred
-searchdb connect-delta labs --source /data/labs --dry-run
+dsrch connect-delta labs --source /data/labs --dry-run
 # prints: {"fields":{"name":"keyword","age":"numeric","created":"date"}}
 ```
 
-- **Primary strategy: Arrow schema mapping.** Delta tables have an explicit Arrow schema. Map Arrow types to SearchDB field types:
+- **Primary strategy: Arrow schema mapping.** Delta tables have an explicit Arrow schema. Map Arrow types to deltasearch field types:
 
-| Arrow Type | SearchDB FieldType |
+| Arrow Type | deltasearch FieldType |
 |---|---|
 | `Utf8`, `LargeUtf8` | `Keyword` |
 | `Int8/16/32/64`, `UInt8/16/32/64`, `Float16/32/64` | `Numeric` |
@@ -164,7 +164,7 @@ Schema evolution requires a full reindex. This is expensive for large indexes. H
 - It only happens when a **new field** appears, not on every document.
 - In practice, schemas stabilize quickly. After the first few batches, all fields are known.
 - The reindex reads from the local tantivy index (`_source` field), not from Delta Lake. This is fast -- it is a local disk scan, not a network operation.
-- For Delta-connected indexes, the alternative is `searchdb reindex`, which re-reads from Delta. Our approach is cheaper.
+- For Delta-connected indexes, the alternative is `dsrch reindex`, which re-reads from Delta. Our approach is cheaper.
 
 ### Optimization: Batch Discovery
 
@@ -194,18 +194,18 @@ Allow `--schema` to be a partial declaration. Fields listed in the schema use th
 
 ```bash
 # Declare "notes" as text (full-text), let everything else be inferred
-searchdb new myindex --schema '{"fields":{"notes":"text"}}'
+dsrch new myindex --schema '{"fields":{"notes":"text"}}'
 ```
 
 When inference runs, it skips fields already declared in the schema. This is the simplest approach and requires no new syntax.
 
 ### Option 2: Post-Hoc Schema Update (Future)
 
-A `searchdb alter-schema` command that changes a field's type. This requires a full reindex (tantivy schema is immutable). Useful but not needed for v1.
+A `dsrch alter-schema` command that changes a field's type. This requires a full reindex (tantivy schema is immutable). Useful but not needed for v1.
 
 ```bash
 # Change "notes" from keyword to text after initial inference
-searchdb alter-schema myindex --field notes --type text
+dsrch alter-schema myindex --field notes --type text
 ```
 
 This is deferred. Option 1 covers the common case.
@@ -294,14 +294,14 @@ When `--schema` is provided as a partial schema alongside inference (Option 1 ab
 
 ### CLI Changes
 
-- [ ] `searchdb new myindex` (no `--schema`) succeeds and creates an index with empty schema and `inferred: true`.
-- [ ] `searchdb new myindex --schema '{...}'` works exactly as before (backward compatible).
-- [ ] `searchdb new myindex --infer-from data.ndjson` reads the file, infers schema, creates index (empty, ready to index).
-- [ ] `searchdb new myindex --infer-from data.ndjson --dry-run` prints inferred schema JSON to stdout and exits without creating anything.
-- [ ] `searchdb new myindex --infer-from data.ndjson --schema '{"fields":{"notes":"text"}}'` uses `text` for `notes`, infers everything else.
-- [ ] `searchdb connect-delta myindex --source <uri>` (no `--schema`) infers schema from Arrow schema.
-- [ ] `searchdb connect-delta myindex --source <uri> --dry-run` prints inferred Arrow schema mapping and exits.
-- [ ] `searchdb connect-delta myindex --source <uri> --schema '{...}'` works exactly as before.
+- [ ] `dsrch new myindex` (no `--schema`) succeeds and creates an index with empty schema and `inferred: true`.
+- [ ] `dsrch new myindex --schema '{...}'` works exactly as before (backward compatible).
+- [ ] `dsrch new myindex --infer-from data.ndjson` reads the file, infers schema, creates index (empty, ready to index).
+- [ ] `dsrch new myindex --infer-from data.ndjson --dry-run` prints inferred schema JSON to stdout and exits without creating anything.
+- [ ] `dsrch new myindex --infer-from data.ndjson --schema '{"fields":{"notes":"text"}}'` uses `text` for `notes`, infers everything else.
+- [ ] `dsrch connect-delta myindex --source <uri>` (no `--schema`) infers schema from Arrow schema.
+- [ ] `dsrch connect-delta myindex --source <uri> --dry-run` prints inferred Arrow schema mapping and exits.
+- [ ] `dsrch connect-delta myindex --source <uri> --schema '{...}'` works exactly as before.
 
 ### Arrow Schema Mapping
 

@@ -51,7 +51,7 @@ That's it. No buffer directory, no manifest, no lockfiles beyond tantivy's own.
 ## Query Path
 
 ```
-searchdb search labs -q "diabetes"
+dsrch search labs -q "diabetes"
 
 1. Read searchdb.json → index_version = 103
 2. Check Delta HEAD → version 108
@@ -61,7 +61,7 @@ searchdb search labs -q "diabetes"
 6. Search ephemeral index
 7. Merge results from both, dedup by _id (gap wins), apply limit/offset
 8. Return results
-9. If gap > N versions → fire-and-forget: spawn `searchdb sync labs`
+9. If gap > N versions → fire-and-forget: spawn `dsrch sync labs`
 ```
 
 Every query returns immediately with fresh results. The gap is always read from Delta, so results include the latest data regardless of whether promotion has happened.
@@ -87,7 +87,7 @@ When the same `_id` appears in both the persistent index and the gap, the gap ve
 3. Merge both result sets by score (descending)
 4. Apply offset/limit to the merged set
 
-### `searchdb get` Behavior
+### `dsrch get` Behavior
 
 Simplified path for single-document lookup:
 
@@ -115,7 +115,7 @@ std::process::Command::new(std::env::current_exe()?)
     .spawn()?;
 ```
 
-The background process is just `searchdb sync`, which already exists:
+The background process is just `dsrch sync`, which already exists:
 
 1. Acquire tantivy `IndexWriter` lock
    - If locked: exit silently (another promoter is running)
@@ -135,7 +135,7 @@ The background process is just `searchdb sync`, which already exists:
 
 ### `sync` Command Changes
 
-The existing `searchdb sync` command needs one change: if the `IndexWriter` lock is held, exit with code 0 (success) instead of returning an error. This makes it safe to spawn as a fire-and-forget process.
+The existing `dsrch sync` command needs one change: if the `IndexWriter` lock is held, exit with code 0 (success) instead of returning an error. This makes it safe to spawn as a fire-and-forget process.
 
 ## Command Integration
 
@@ -166,11 +166,11 @@ The gap stays small in practice because every query that sees a large gap spawns
 
 ### Write Contention
 
-None during normal query flow. The only lock acquisition is in `searchdb sync` (background promotion), which exits silently if contended. Queries never block.
+None during normal query flow. The only lock acquisition is in `dsrch sync` (background promotion), which exits silently if contended. Queries never block.
 
 ## Limitations
 
-1. **Delta deletes are not handled by incremental sync.** If rows are deleted from the Delta table, the search index retains stale documents. Use `searchdb reindex` to rebuild. Existing limitation, unchanged.
+1. **Delta deletes are not handled by incremental sync.** If rows are deleted from the Delta table, the search index retains stale documents. Use `dsrch reindex` to rebuild. Existing limitation, unchanged.
 
 2. **Gap read cost scales with gap size.** Reading Parquet files from Delta is slower than reading a local buffer. The fire-and-forget promotion keeps the gap bounded.
 

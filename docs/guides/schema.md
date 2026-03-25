@@ -1,10 +1,10 @@
 # Schema
 
-SearchDB schemas map field names to types. Schemas are optional -- you can declare one explicitly, infer one from sample data, or let SearchDB figure it out automatically.
+deltasearch schemas map field names to types. Schemas are optional -- you can declare one explicitly, infer one from sample data, or let deltasearch figure it out automatically.
 
 ## Field types
 
-SearchDB has four field types. If you have used Elasticsearch, these will be familiar.
+deltasearch has four field types. If you have used Elasticsearch, these will be familiar.
 
 ### `keyword`
 
@@ -14,7 +14,7 @@ Exact-match string field. Stored and indexed with a `raw` tokenizer (no analysis
 
 ```bash
 # Exact match
-searchdb search orders -q '+status:"shipped"'
+dsrch search orders -q '+status:"shipped"'
 
 # Will NOT match "SHIPPED" -- keyword is case-sensitive
 ```
@@ -27,10 +27,10 @@ Full-text searchable string field. Stored and indexed with the `en_stem` tokeniz
 
 ```bash
 # Stemmed search: "running" matches "runs", "ran", "runner"
-searchdb search articles -q "running"
+dsrch search articles -q "running"
 
 # Phrase search
-searchdb search articles -q 'description:"machine learning"'
+dsrch search articles -q 'description:"machine learning"'
 ```
 
 ### `numeric`
@@ -41,10 +41,10 @@ searchdb search articles -q 'description:"machine learning"'
 
 ```bash
 # Range query (inclusive)
-searchdb search products -q 'price:[10 TO 50]'
+dsrch search products -q 'price:[10 TO 50]'
 
 # Open-ended range
-searchdb search products -q 'price:{100 TO *}'
+dsrch search products -q 'price:{100 TO *}'
 ```
 
 ### `date`
@@ -55,7 +55,7 @@ ISO 8601 datetime field. Stored, indexed, and fast (columnar). Use this for time
 
 ```bash
 # Date range
-searchdb search events -q 'created_at:[2024-01-01T00:00:00Z TO 2024-12-31T23:59:59Z]'
+dsrch search events -q 'created_at:[2024-01-01T00:00:00Z TO 2024-12-31T23:59:59Z]'
 ```
 
 ## Declaring a schema
@@ -63,7 +63,7 @@ searchdb search events -q 'created_at:[2024-01-01T00:00:00Z TO 2024-12-31T23:59:
 Pass a JSON object with a `fields` key mapping field names to types:
 
 ```bash
-searchdb new customers --schema '{
+dsrch new customers --schema '{
   "fields": {
     "name": "text",
     "email": "keyword",
@@ -76,7 +76,7 @@ searchdb new customers --schema '{
 
 ## Schema inference
 
-If you do not provide a schema, SearchDB infers types from your data. The rules are:
+If you do not provide a schema, deltasearch infers types from your data. The rules are:
 
 | JSON value | Inferred type |
 |-----------|---------------|
@@ -98,7 +98,7 @@ Use `--infer-from` to infer a schema from a sample NDJSON file without creating 
 
 ```bash
 # Preview the inferred schema
-searchdb new products --infer-from sample.ndjson --dry-run
+dsrch new products --infer-from sample.ndjson --dry-run
 ```
 
 Output:
@@ -110,7 +110,7 @@ Output:
 Once you are happy with the schema (perhaps promoting `name` from `keyword` to `text`), create the index:
 
 ```bash
-searchdb new products --schema '{
+dsrch new products --schema '{
   "fields": {
     "name": "text",
     "price": "numeric",
@@ -122,19 +122,19 @@ searchdb new products --schema '{
 
 ### Infer from a Delta table
 
-When using `connect-delta`, if you omit the `--schema` flag, SearchDB infers types from the Delta table's Arrow schema:
+When using `connect-delta`, if you omit the `--schema` flag, deltasearch infers types from the Delta table's Arrow schema:
 
 ```bash
 # Preview inferred schema from Delta
-searchdb connect-delta products --source /path/to/delta_table --dry-run
+dsrch connect-delta products --source /path/to/delta_table --dry-run
 
 # Accept the inferred schema
-searchdb connect-delta products --source /path/to/delta_table
+dsrch connect-delta products --source /path/to/delta_table
 ```
 
 Arrow type mapping:
 
-| Arrow type | SearchDB type |
+| Arrow type | deltasearch type |
 |-----------|---------------|
 | `Utf8`, `LargeUtf8` | `keyword` |
 | `Boolean` | `keyword` |
@@ -144,17 +144,17 @@ Arrow type mapping:
 
 ## Dynamic schema evolution
 
-When you index documents with fields not in the current schema, SearchDB infers types for the new fields and adds them to the schema. Existing fields keep their original types.
+When you index documents with fields not in the current schema, deltasearch infers types for the new fields and adds them to the schema. Existing fields keep their original types.
 
 This means you can start with a minimal schema and let it grow as your data evolves -- similar to Elasticsearch's dynamic mapping.
 
 ## Internal fields
 
-SearchDB adds three internal fields to every index. You do not declare these in your schema.
+deltasearch adds three internal fields to every index. You do not declare these in your schema.
 
 ### `_id`
 
-Document identity. Used for upsert deduplication. If your data includes `_id`, SearchDB uses it. Otherwise, a UUID is generated.
+Document identity. Used for upsert deduplication. If your data includes `_id`, deltasearch uses it. Otherwise, a UUID is generated.
 
 ### `_source`
 
@@ -166,15 +166,15 @@ A hidden field that tracks which fields are non-null in each document. This powe
 
 ```bash
 # Find documents where "email" field exists
-searchdb search users --dsl '{"exists": {"field": "email"}}'
+dsrch search users --dsl '{"exists": {"field": "email"}}'
 ```
 
 ## Overwriting an index
 
-If an index already exists, `searchdb new` will fail. Use `--overwrite` to replace it:
+If an index already exists, `dsrch new` will fail. Use `--overwrite` to replace it:
 
 ```bash
-searchdb new products --schema '{"fields":{"name":"text"}}' --overwrite
+dsrch new products --schema '{"fields":{"name":"text"}}' --overwrite
 ```
 
 This destroys the existing index and creates a fresh one.

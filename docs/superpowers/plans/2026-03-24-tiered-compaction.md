@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a `searchdb compact` command that implements a long-lived tiered compaction worker: Level 1 polls Delta Lake and commits small segments with NoMergePolicy; Level 2 merges segments on a timer when segment count exceeds a threshold. This replaces the all-or-nothing `sync` command for production workloads.
+**Goal:** Add a `dsrch compact` command that implements a long-lived tiered compaction worker: Level 1 polls Delta Lake and commits small segments with NoMergePolicy; Level 2 merges segments on a timer when segment count exceeds a threshold. This replaces the all-or-nothing `sync` command for production workloads.
 
 **Architecture:** Two-tier compaction loop. Level 1 (segmentation) polls Delta for new rows, accumulates up to `segment_size` rows, and commits each batch as a separate tantivy segment using `NoMergePolicy`. Level 2 (merge) runs on a timer and merges segments when the count exceeds `max_segments`. The worker is the single writer; search/get clients are read-only. Crash safety is guaranteed by committing tantivy before advancing the `index_version` watermark in `searchdb.json`.
 
@@ -333,7 +333,7 @@ impl<'a> CompactWorker<'a> {
 
         // Handle --force-merge: merge all segments and exit
         if self.opts.force_merge {
-            eprintln!("[searchdb] compact: force-merging all segments...");
+            eprintln!("[dsrch] compact: force-merging all segments...");
             self.force_merge_all(&index, &mut index_writer).await?;
             return Ok(());
         }
@@ -343,7 +343,7 @@ impl<'a> CompactWorker<'a> {
         // Main loop
         loop {
             if *shutdown.borrow() {
-                eprintln!("[searchdb] compact: shutdown signal received, finishing...");
+                eprintln!("[dsrch] compact: shutdown signal received, finishing...");
                 break;
             }
 
@@ -354,7 +354,7 @@ impl<'a> CompactWorker<'a> {
             let current_version = match delta.current_version().await {
                 Ok(v) => v,
                 Err(e) => {
-                    eprintln!("[searchdb] compact: Delta poll error: {e}");
+                    eprintln!("[dsrch] compact: Delta poll error: {e}");
                     if self.opts.once {
                         return Err(e);
                     }
@@ -366,19 +366,19 @@ impl<'a> CompactWorker<'a> {
             if current_version > index_version {
                 let gap = current_version - index_version;
                 eprintln!(
-                    "[searchdb] compact: polling Delta... HEAD={current_version}, \
+                    "[dsrch] compact: polling Delta... HEAD={current_version}, \
                      index={index_version}, gap={gap} versions"
                 );
 
                 let rows = delta.rows_added_since(index_version).await?;
 
                 if rows.is_empty() {
-                    eprintln!("[searchdb] compact: no new rows to index");
+                    eprintln!("[dsrch] compact: no new rows to index");
                     current_config.index_version = Some(current_version);
                     self.save_config_with_compact(&current_config)?;
                 } else {
                     eprintln!(
-                        "[searchdb] compact: read {} rows from Delta v{}..v{}",
+                        "[dsrch] compact: read {} rows from Delta v{}..v{}",
                         rows.len(),
                         index_version,
                         current_version
@@ -404,7 +404,7 @@ impl<'a> CompactWorker<'a> {
                         index_writer.commit()?;
 
                         eprintln!(
-                            "[searchdb] compact: committed segment {}/{} ({} docs)",
+                            "[dsrch] compact: committed segment {}/{} ({} docs)",
                             i + 1,
                             num_batches,
                             batch.len()
@@ -417,11 +417,11 @@ impl<'a> CompactWorker<'a> {
                     self.storage.save_config(&self.name, &current_config)?;
 
                     eprintln!(
-                        "[searchdb] compact: now at Delta v{current_version}"
+                        "[dsrch] compact: now at Delta v{current_version}"
                     );
                 }
             } else {
-                eprintln!("[searchdb] compact: up to date at Delta v{current_version}");
+                eprintln!("[dsrch] compact: up to date at Delta v{current_version}");
             }
 
             // Level 2: Check for merge opportunity
@@ -444,7 +444,7 @@ impl<'a> CompactWorker<'a> {
 
         // Clean shutdown
         index_writer.wait_merging_threads()?;
-        eprintln!("[searchdb] compact: shutdown complete");
+        eprintln!("[dsrch] compact: shutdown complete");
         Ok(())
     }
 
@@ -461,7 +461,7 @@ impl<'a> CompactWorker<'a> {
         let segment_count = searcher.segment_readers().len();
 
         eprintln!(
-            "[searchdb] compact: merge check: {segment_count} segments, \
+            "[dsrch] compact: merge check: {segment_count} segments, \
              threshold={}",
             self.opts.max_segments
         );
@@ -480,7 +480,7 @@ impl<'a> CompactWorker<'a> {
         }
 
         eprintln!(
-            "[searchdb] compact: merging {} segments...",
+            "[dsrch] compact: merging {} segments...",
             segment_ids.len()
         );
 
@@ -488,13 +488,13 @@ impl<'a> CompactWorker<'a> {
         match merge_future.await {
             Ok(meta) => {
                 eprintln!(
-                    "[searchdb] compact: merged {} segments into 1",
+                    "[dsrch] compact: merged {} segments into 1",
                     segment_ids.len()
                 );
                 let _ = meta;
             }
             Err(e) => {
-                eprintln!("[searchdb] compact: merge failed: {e}");
+                eprintln!("[dsrch] compact: merge failed: {e}");
             }
         }
 
@@ -521,21 +521,21 @@ impl<'a> CompactWorker<'a> {
 
         if segment_ids.len() <= 1 {
             eprintln!(
-                "[searchdb] compact: already {} segment(s), nothing to merge",
+                "[dsrch] compact: already {} segment(s), nothing to merge",
                 segment_ids.len()
             );
             return Ok(());
         }
 
         eprintln!(
-            "[searchdb] compact: force-merging {} segments into 1...",
+            "[dsrch] compact: force-merging {} segments into 1...",
             segment_ids.len()
         );
 
         let merge_future = index_writer.merge(&segment_ids);
         match merge_future.await {
             Ok(_) => {
-                eprintln!("[searchdb] compact: force-merge complete");
+                eprintln!("[dsrch] compact: force-merge complete");
             }
             Err(e) => {
                 return Err(SearchDbError::Tantivy(e));
@@ -633,7 +633,7 @@ git commit -m "feat(compact): add CompactWorker with Level 1 segmentation and Le
 
 ---
 
-## Task 4: Implement the `searchdb compact` CLI command
+## Task 4: Implement the `dsrch compact` CLI command
 
 **Files:**
 - Create: `/Users/ericssoncolborn/Documents/searchdb-rs/src/commands/compact.rs`
@@ -692,17 +692,17 @@ pub async fn run(
                     .expect("failed to install SIGTERM handler");
             tokio::select! {
                 _ = ctrl_c => {
-                    eprintln!("\n[searchdb] compact: received SIGINT, shutting down gracefully...");
+                    eprintln!("\n[dsrch] compact: received SIGINT, shutting down gracefully...");
                 }
                 _ = sigterm.recv() => {
-                    eprintln!("[searchdb] compact: received SIGTERM, shutting down gracefully...");
+                    eprintln!("[dsrch] compact: received SIGTERM, shutting down gracefully...");
                 }
             }
         }
         #[cfg(not(unix))]
         {
             ctrl_c.await.ok();
-            eprintln!("\n[searchdb] compact: received Ctrl+C, shutting down gracefully...");
+            eprintln!("\n[dsrch] compact: received Ctrl+C, shutting down gracefully...");
         }
         let _ = shutdown_tx.send(true);
     });
@@ -820,12 +820,12 @@ Expected: Shows help with all flags (`--segment-size`, `--merge-interval`, `--ma
 
 ```bash
 git add src/commands/compact.rs src/commands/mod.rs src/main.rs
-git commit -m "feat(cli): add searchdb compact command with all flags"
+git commit -m "feat(cli): add dsrch compact command with all flags"
 ```
 
 ---
 
-## Task 5: Make `searchdb sync` an alias for `compact --once` with deprecation warning
+## Task 5: Make `dsrch sync` an alias for `compact --once` with deprecation warning
 
 **Files:**
 - Modify: `/Users/ericssoncolborn/Documents/searchdb-rs/src/commands/sync.rs`
@@ -842,10 +842,10 @@ use crate::storage::Storage;
 /// Manual incremental sync from a Delta Lake source.
 ///
 /// DEPRECATED: This command is now an alias for `compact --once`.
-/// Use `searchdb compact <name> --once` instead.
+/// Use `dsrch compact <name> --once` instead.
 pub async fn run(storage: &Storage, name: &str) -> Result<()> {
     eprintln!(
-        "[searchdb] WARNING: 'sync' is deprecated. Use 'compact --once' instead."
+        "[dsrch] WARNING: 'sync' is deprecated. Use 'compact --once' instead."
     );
 
     if !storage.exists(name) {
@@ -880,7 +880,7 @@ git commit -m "feat(sync): deprecate sync command, make it an alias for compact 
 
 ---
 
-## Task 6: Add compaction metadata to `searchdb stats`
+## Task 6: Add compaction metadata to `dsrch stats`
 
 **Files:**
 - Modify: `/Users/ericssoncolborn/Documents/searchdb-rs/src/commands/stats.rs`
@@ -1058,7 +1058,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let delta_path = dir.path().join("delta_table");
         let delta_str = delta_path.to_str().unwrap();
-        let data_dir = dir.path().join("searchdb_data");
+        let data_dir = dir.path().join("dsrch_data");
         let data_str = data_dir.to_str().unwrap();
 
         // 1. Create Delta table with initial data
@@ -1132,7 +1132,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let delta_path = dir.path().join("delta_table");
         let delta_str = delta_path.to_str().unwrap();
-        let data_dir = dir.path().join("searchdb_data");
+        let data_dir = dir.path().join("dsrch_data");
         let data_str = data_dir.to_str().unwrap();
 
         // Create Delta table
@@ -1197,7 +1197,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let delta_path = dir.path().join("delta_table");
         let delta_str = delta_path.to_str().unwrap();
-        let data_dir = dir.path().join("searchdb_data");
+        let data_dir = dir.path().join("dsrch_data");
         let data_str = data_dir.to_str().unwrap();
 
         // Create Delta table with initial data
@@ -1250,7 +1250,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let delta_path = dir.path().join("delta_table");
         let delta_str = delta_path.to_str().unwrap();
-        let data_dir = dir.path().join("searchdb_data");
+        let data_dir = dir.path().join("dsrch_data");
         let data_str = data_dir.to_str().unwrap();
 
         create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
@@ -1486,7 +1486,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let delta_path = dir.path().join("delta_table");
         let delta_str = delta_path.to_str().unwrap();
-        let data_dir = dir.path().join("searchdb_data");
+        let data_dir = dir.path().join("dsrch_data");
         let data_str = data_dir.to_str().unwrap();
 
         create_delta_table(
@@ -1548,7 +1548,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let delta_path = dir.path().join("delta_table");
         let delta_str = delta_path.to_str().unwrap();
-        let data_dir = dir.path().join("searchdb_data");
+        let data_dir = dir.path().join("dsrch_data");
         let data_str = data_dir.to_str().unwrap();
 
         create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
@@ -1604,7 +1604,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let delta_path = dir.path().join("delta_table");
         let delta_str = delta_path.to_str().unwrap();
-        let data_dir = dir.path().join("searchdb_data");
+        let data_dir = dir.path().join("dsrch_data");
         let data_str = data_dir.to_str().unwrap();
 
         create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
@@ -1651,7 +1651,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let delta_path = dir.path().join("delta_table");
         let delta_str = delta_path.to_str().unwrap();
-        let data_dir = dir.path().join("searchdb_data");
+        let data_dir = dir.path().join("dsrch_data");
         let data_str = data_dir.to_str().unwrap();
 
         create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
@@ -1719,7 +1719,7 @@ Add to the test module in `/Users/ericssoncolborn/Documents/searchdb-rs/src/comp
         let dir = tempfile::tempdir().unwrap();
         let delta_path = dir.path().join("delta_table");
         let delta_str = delta_path.to_str().unwrap();
-        let data_dir = dir.path().join("searchdb_data");
+        let data_dir = dir.path().join("dsrch_data");
         let data_str = data_dir.to_str().unwrap();
 
         create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
@@ -1843,9 +1843,9 @@ git commit -m "fix: address clippy and fmt issues from final verification"
 | 1 | `CompactMeta` struct + `compact` field in `IndexConfig` | `src/storage.rs`, `src/commands/connect_delta.rs`, `src/commands/new_index.rs`, `src/commands/reindex.rs` |
 | 2 | `WriterLocked` error variant | `src/error.rs` |
 | 3 | `CompactWorker` with L1 segmentation + L2 merge | `src/compact.rs`, `src/main.rs` |
-| 4 | `searchdb compact` CLI command with all flags | `src/commands/compact.rs`, `src/commands/mod.rs`, `src/main.rs` |
+| 4 | `dsrch compact` CLI command with all flags | `src/commands/compact.rs`, `src/commands/mod.rs`, `src/main.rs` |
 | 5 | Deprecate `sync` as alias for `compact --once` | `src/commands/sync.rs` |
-| 6 | Compaction metadata in `searchdb stats` | `src/commands/stats.rs` |
+| 6 | Compaction metadata in `dsrch stats` | `src/commands/stats.rs` |
 | 7 | Integration tests (segment creation, merge, upsert, lock) | `src/compact.rs` |
 | 8 | Signal handling test | `src/compact.rs` |
 | 9 | Final verification (fmt, clippy, test, E2E) | (no new files) |

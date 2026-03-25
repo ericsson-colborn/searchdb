@@ -1,4 +1,4 @@
-# SearchDB Rust MVP Implementation Plan
+# deltasearch Rust MVP Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -25,16 +25,16 @@ src/
 ├── error.rs             # Error types (thiserror)
 ├── commands/
 │   ├── mod.rs           # Module exports
-│   ├── new_index.rs     # `searchdb new` — create index from schema JSON
-│   ├── index.rs         # `searchdb index` — bulk NDJSON indexing
-│   ├── search.rs        # `searchdb search` — query + output results
-│   ├── get.rs           # `searchdb get` — single doc by _id
-│   ├── connect_delta.rs # `searchdb connect-delta` — attach Delta source
-│   ├── sync.rs          # `searchdb sync` — manual incremental sync
-│   ├── reindex.rs       # `searchdb reindex` — full rebuild from Delta
-│   ├── stats.rs         # `searchdb stats` — index statistics
-│   ├── drop.rs          # `searchdb drop` — delete index
-│   └── serve.rs         # `searchdb serve` — HTTP search server (Phase 2)
+│   ├── new_index.rs     # `dsrch new` — create index from schema JSON
+│   ├── index.rs         # `dsrch index` — bulk NDJSON indexing
+│   ├── search.rs        # `dsrch search` — query + output results
+│   ├── get.rs           # `dsrch get` — single doc by _id
+│   ├── connect_delta.rs # `dsrch connect-delta` — attach Delta source
+│   ├── sync.rs          # `dsrch sync` — manual incremental sync
+│   ├── reindex.rs       # `dsrch reindex` — full rebuild from Delta
+│   ├── stats.rs         # `dsrch stats` — index statistics
+│   ├── drop.rs          # `dsrch drop` — delete index
+│   └── serve.rs         # `dsrch serve` — HTTP search server (Phase 2)
 ```
 
 ---
@@ -105,12 +105,12 @@ impl Schema {
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "searchdb", about = "ES in your pocket")]
+#[command(name = "dsrch", about = "ES in your pocket")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
     /// Data directory for indexes
-    #[arg(long, default_value = ".searchdb")]
+    #[arg(long, default_value = ".dsrch")]
     data_dir: String,
 }
 
@@ -121,13 +121,13 @@ enum Commands {
 }
 ```
 
-- [ ] **Step 4: Implement `searchdb new` — creates index dir + schema**
+- [ ] **Step 4: Implement `dsrch new` — creates index dir + schema**
 
 - [ ] **Step 5: Verify it compiles and runs**
 
 ```bash
 cargo build
-./target/debug/searchdb new test_index --schema '{"fields":{"name":"keyword","notes":"text"}}'
+./target/debug/dsrch new test_index --schema '{"fields":{"name":"keyword","notes":"text"}}'
 ```
 
 - [ ] **Step 6: Commit**
@@ -159,14 +159,14 @@ pub fn upsert_document(writer: &IndexWriter, id_field: Field, doc: Document, doc
 }
 ```
 
-- [ ] **Step 3: Implement `searchdb index` — reads NDJSON, indexes documents**
+- [ ] **Step 3: Implement `dsrch index` — reads NDJSON, indexes documents**
 
 Read from stdin or file, parse each line as JSON, construct tantivy doc, add to writer, commit.
 
 - [ ] **Step 4: Test — create index, pipe NDJSON, verify files exist**
 
 ```bash
-echo '{"_id":"d1","name":"glucose","notes":"fasting sample"}' | ./target/debug/searchdb index test_index
+echo '{"_id":"d1","name":"glucose","notes":"fasting sample"}' | ./target/debug/dsrch index test_index
 ```
 
 - [ ] **Step 5: Write Rust tests**
@@ -201,18 +201,18 @@ mod tests {
 - Apply field projection if `--fields` specified
 - Include `_id` and optionally `_score` in output
 
-- [ ] **Step 2: Implement `searchdb search` command**
+- [ ] **Step 2: Implement `dsrch search` command**
 
 ```bash
-searchdb search test_index -q '+name:"glucose"' --limit 20 --offset 0 --output json
+dsrch search test_index -q '+name:"glucose"' --limit 20 --offset 0 --output json
 ```
 
 Output: NDJSON to stdout (one JSON object per line).
 
-- [ ] **Step 3: Implement `searchdb get` command**
+- [ ] **Step 3: Implement `dsrch get` command**
 
 ```bash
-searchdb get test_index d1 --output json
+dsrch get test_index d1 --output json
 ```
 
 Search by `_id`, return single doc or exit code 1 if not found.
@@ -248,17 +248,17 @@ Manages on-disk layout:
 - `index/` — tantivy segment directory
 - `list_indexes()`, `exists()`, `drop()`, `load_config()`, `save_config()`
 
-- [ ] **Step 2: Implement `searchdb stats`**
+- [ ] **Step 2: Implement `dsrch stats`**
 
 ```bash
-searchdb stats test_index --output json
+dsrch stats test_index --output json
 # {"index":"test_index","num_docs":42,"num_segments":3,"fields":{"name":"keyword","notes":"text"}}
 ```
 
-- [ ] **Step 3: Implement `searchdb drop`**
+- [ ] **Step 3: Implement `dsrch drop`**
 
 ```bash
-searchdb drop test_index
+dsrch drop test_index
 # [searchdb] Dropped 'test_index'
 ```
 
@@ -292,27 +292,27 @@ Port the file-level diffing algorithm from Python's `delta.py`:
 - `current.file_uris() - previous.file_uris()` → read only new Parquet files
 - Convert Arrow RecordBatches to JSON values
 
-- [ ] **Step 2: Implement `searchdb connect-delta`**
+- [ ] **Step 2: Implement `dsrch connect-delta`**
 
 ```bash
-searchdb connect-delta labs --source /path/to/delta --schema '{"fields":{"name":"keyword"}}'
+dsrch connect-delta labs --source /path/to/delta --schema '{"fields":{"name":"keyword"}}'
 ```
 
 Creates index, performs full load, saves Delta source + version to `searchdb.json`.
 
-- [ ] **Step 3: Implement `searchdb sync`**
+- [ ] **Step 3: Implement `dsrch sync`**
 
 Manual trigger for incremental sync. Reads meta, diffs versions, indexes new rows.
 
-- [ ] **Step 4: Implement `searchdb reindex`**
+- [ ] **Step 4: Implement `dsrch reindex`**
 
 ```bash
-searchdb reindex labs [--as-of-version 5]
+dsrch reindex labs [--as-of-version 5]
 ```
 
 Drop + rebuild from Delta source.
 
-- [ ] **Step 5: Add auto-sync to `searchdb search` and `searchdb get`**
+- [ ] **Step 5: Add auto-sync to `dsrch search` and `dsrch get`**
 
 Before executing search, check if Delta source is configured and if version has advanced. If so, sync inline (small delta) or warn (large delta).
 
@@ -368,7 +368,7 @@ Targets: x86_64-linux, aarch64-linux, x86_64-macos, aarch64-macos
 
 ```bash
 cargo build --release
-ls -la target/release/searchdb
+ls -la target/release/dsrch
 ```
 
 - [ ] **Step 4: Commit**
@@ -392,14 +392,14 @@ cargo test
 
 # End-to-end smoke test
 echo '{"_id":"1","name":"glucose","notes":"fasting sample"}
-{"_id":"2","name":"a1c","notes":"borderline diabetic"}' | ./target/debug/searchdb index labs --schema '{"fields":{"name":"keyword","notes":"text"}}'
+{"_id":"2","name":"a1c","notes":"borderline diabetic"}' | ./target/debug/dsrch index labs --schema '{"fields":{"name":"keyword","notes":"text"}}'
 
-./target/debug/searchdb search labs -q 'diabetes' --output json
+./target/debug/dsrch search labs -q 'diabetes' --output json
 # Should return doc 2 (stemmed match: diabetic ↔ diabetes)
 
-./target/debug/searchdb get labs 1 --output json
+./target/debug/dsrch get labs 1 --output json
 # Should return doc 1
 
-./target/debug/searchdb stats labs --output json
+./target/debug/dsrch stats labs --output json
 # Should show num_docs: 2
 ```
