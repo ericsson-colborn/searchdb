@@ -90,7 +90,6 @@ fn print_results(results: &[searcher::SearchHit], fmt: OutputFormat) -> Result<(
         }
         OutputFormat::Text => {
             if results.is_empty() {
-                eprintln!("[dsrch] No results");
                 return Ok(());
             }
             let first = results[0].doc.as_object().unwrap();
