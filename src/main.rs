@@ -59,16 +59,22 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Create a new index from a schema declaration
+    /// Create a new index (schema optional — inferred from data if omitted)
     New {
         /// Index name
         name: String,
         /// Schema JSON: {"fields":{"name":"keyword","notes":"text"}}
         #[arg(long)]
-        schema: String,
+        schema: Option<String>,
         /// Overwrite if index already exists
         #[arg(long, default_value_t = false)]
         overwrite: bool,
+        /// Infer schema from an NDJSON sample file (file is NOT indexed)
+        #[arg(long)]
+        infer_from: Option<String>,
+        /// Print inferred schema as JSON and exit without creating
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
 
     /// Bulk index NDJSON documents (stdin or file)
@@ -135,9 +141,12 @@ enum Commands {
         /// Path or URI to Delta table root
         #[arg(long)]
         source: String,
-        /// Schema JSON: {"fields":{"name":"keyword","notes":"text"}}
+        /// Schema JSON (optional — inferred from Arrow schema if omitted)
         #[arg(long)]
-        schema: String,
+        schema: Option<String>,
+        /// Print inferred schema as JSON and exit without creating
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
 
     /// Manual incremental sync from Delta Lake source
@@ -209,7 +218,16 @@ async fn run_cli() {
             name,
             schema,
             overwrite,
-        } => commands::new_index::run(&storage, &name, &schema, overwrite),
+            infer_from,
+            dry_run,
+        } => commands::new_index::run(
+            &storage,
+            &name,
+            schema.as_deref(),
+            overwrite,
+            infer_from.as_deref(),
+            dry_run,
+        ),
         Commands::Index { name, file } => commands::index::run(&storage, &name, file.as_deref()),
         Commands::Search {
             name,
@@ -255,7 +273,10 @@ async fn run_cli() {
             name,
             source,
             schema,
-        } => commands::connect_delta::run(&storage, &name, &source, &schema).await,
+            dry_run,
+        } => {
+            commands::connect_delta::run(&storage, &name, &source, schema.as_deref(), dry_run).await
+        }
         Commands::Sync { name } => commands::sync::run(&storage, &name).await,
         Commands::Reindex {
             name,
@@ -370,7 +391,16 @@ fn run_cli_sync() {
             name,
             schema,
             overwrite,
-        } => commands::new_index::run(&storage, &name, &schema, overwrite),
+            infer_from,
+            dry_run,
+        } => commands::new_index::run(
+            &storage,
+            &name,
+            schema.as_deref(),
+            overwrite,
+            infer_from.as_deref(),
+            dry_run,
+        ),
         Commands::Index { name, file } => commands::index::run(&storage, &name, file.as_deref()),
         Commands::Search {
             name,

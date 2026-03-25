@@ -274,4 +274,19 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(source).unwrap();
         assert_eq!(parsed["name"], "updated");
     }
+
+    #[test]
+    fn test_build_document_boolean_as_keyword() {
+        let schema = Schema {
+            fields: BTreeMap::from([("active".into(), FieldType::Keyword)]),
+        };
+        let tv_schema = schema.build_tantivy_schema();
+
+        let doc_json = serde_json::json!({"_id": "d1", "active": true});
+        let doc = build_document(&tv_schema, &schema, &doc_json, "d1").unwrap();
+
+        let field = tv_schema.get_field("active").unwrap();
+        let values: Vec<&str> = doc.get_all(field).flat_map(|v| v.as_str()).collect();
+        assert_eq!(values, vec!["true"]);
+    }
 }

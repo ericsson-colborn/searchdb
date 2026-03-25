@@ -443,7 +443,8 @@ mod tests {
             &storage,
             "lab",
             delta_str,
-            r#"{"fields":{"name":"keyword","value":"numeric"}}"#,
+            Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
+            false,
         )
         .await
         .unwrap();
@@ -501,7 +502,8 @@ mod tests {
             &storage,
             "lab",
             delta_str,
-            r#"{"fields":{"name":"keyword","value":"numeric"}}"#,
+            Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
+            false,
         )
         .await
         .unwrap();
@@ -557,7 +559,8 @@ mod tests {
             &storage,
             "lab",
             delta_str,
-            r#"{"fields":{"name":"keyword","value":"numeric"}}"#,
+            Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
+            false,
         )
         .await
         .unwrap();
@@ -604,7 +607,8 @@ mod tests {
             &storage,
             "lab",
             delta_str,
-            r#"{"fields":{"name":"keyword","value":"numeric"}}"#,
+            Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
+            false,
         )
         .await
         .unwrap();
@@ -644,7 +648,8 @@ mod tests {
             &storage,
             "lab",
             delta_str,
-            r#"{"fields":{"name":"keyword","value":"numeric"}}"#,
+            Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
+            false,
         )
         .await
         .unwrap();

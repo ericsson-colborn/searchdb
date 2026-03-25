@@ -3505,6 +3505,7 @@ dependencies = [
  "env_logger",
  "log",
  "parquet",
+ "regex",
  "serde",
  "serde_json",
  "serde_with",

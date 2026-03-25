@@ -51,6 +51,7 @@ atty = "0.2"
 
 # UUID generation for doc IDs
 uuid = { version = "1", features = ["v4"] }
+regex = "1"
 
 [features]
 default = ["delta"]

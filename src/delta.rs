@@ -53,6 +53,21 @@ impl DeltaSync {
         read_parquet_files_to_json(&file_uris)
     }
 
+    /// Return the Arrow schema of the Delta table.
+    pub async fn arrow_schema(&self) -> Result<arrow::datatypes::Schema> {
+        let table = self.open(None).await?;
+        let delta_schema = table
+            .schema()
+            .ok_or_else(|| SearchDbError::Delta("Delta table has no schema".into()))?;
+        let arrow_schema: arrow::datatypes::Schema =
+            delta_schema
+                .try_into()
+                .map_err(|e: arrow::error::ArrowError| {
+                    SearchDbError::Delta(format!("cannot convert Delta schema to Arrow: {e}"))
+                })?;
+        Ok(arrow_schema)
+    }
+
     /// Return rows from files added between last_version and HEAD.
     ///
     /// Uses file-level diffing: new URIs = current.file_uris() - prev.file_uris().
@@ -304,7 +319,8 @@ mod tests {
             &storage,
             "test",
             delta_str,
-            r#"{"fields":{"name":"keyword","value":"numeric"}}"#,
+            Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
+            false,
         )
         .await
         .unwrap();

@@ -7,9 +7,7 @@ use crate::storage::Storage;
 /// DEPRECATED: This command is now an alias for `compact --once`.
 /// Use `searchdb compact <name> --once` instead.
 pub async fn run(storage: &Storage, name: &str) -> Result<()> {
-    eprintln!(
-        "[searchdb] WARNING: 'sync' is deprecated. Use 'compact --once' instead."
-    );
+    eprintln!("[searchdb] WARNING: 'sync' is deprecated. Use 'compact --once' instead.");
 
     if !storage.exists(name) {
         return Err(SearchDbError::IndexNotFound(name.to_string()));

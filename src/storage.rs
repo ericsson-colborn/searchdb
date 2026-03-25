@@ -21,6 +21,9 @@ pub struct CompactMeta {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexConfig {
     pub schema: Schema,
+    /// Whether the schema was inferred (evolution enabled) or explicit (evolution disabled).
+    #[serde(default)]
+    pub inferred: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delta_source: Option<String>,
     #[serde(
@@ -137,6 +140,7 @@ mod tests {
 
         let config = IndexConfig {
             schema,
+            inferred: false,
             delta_source: Some("s3://bucket/labs".into()),
             index_version: Some(42),
             compact: Some(CompactMeta {
@@ -179,6 +183,7 @@ mod tests {
         // Save config WITHOUT compact field (simulates pre-compact indexes)
         let config = IndexConfig {
             schema,
+            inferred: false,
             delta_source: None,
             index_version: None,
             compact: None,
@@ -187,5 +192,50 @@ mod tests {
 
         let loaded = storage.load_config("test").unwrap();
         assert!(loaded.compact.is_none());
+    }
+
+    #[test]
+    fn test_inferred_flag_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path().to_str().unwrap());
+        storage.create_dirs("test").unwrap();
+
+        let schema = Schema {
+            fields: BTreeMap::from([("name".into(), FieldType::Keyword)]),
+        };
+        let tantivy_schema = schema.build_tantivy_schema();
+        tantivy::Index::create_in_dir(storage.tantivy_dir("test"), tantivy_schema).unwrap();
+
+        let config = IndexConfig {
+            schema,
+            inferred: true,
+            delta_source: None,
+            index_version: None,
+            compact: None,
+        };
+        storage.save_config("test", &config).unwrap();
+
+        let loaded = storage.load_config("test").unwrap();
+        assert!(loaded.inferred);
+    }
+
+    #[test]
+    fn test_inferred_flag_defaults_false_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path().to_str().unwrap());
+        storage.create_dirs("test").unwrap();
+
+        let schema = Schema {
+            fields: BTreeMap::from([("name".into(), FieldType::Keyword)]),
+        };
+        let tantivy_schema = schema.build_tantivy_schema();
+        tantivy::Index::create_in_dir(storage.tantivy_dir("test"), tantivy_schema).unwrap();
+
+        // Write JSON manually WITHOUT "inferred" field (simulates old config)
+        let json = r#"{"schema":{"fields":{"name":"keyword"}}}"#;
+        std::fs::write(storage.config_path("test"), json).unwrap();
+
+        let loaded = storage.load_config("test").unwrap();
+        assert!(!loaded.inferred); // defaults to false
     }
 }

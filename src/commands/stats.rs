@@ -100,7 +100,15 @@ mod tests {
     fn test_stats_empty_index() {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::new(dir.path().to_str().unwrap());
-        new_index::run(&storage, "test", r#"{"fields":{"name":"keyword"}}"#, false).unwrap();
+        new_index::run(
+            &storage,
+            "test",
+            Some(r#"{"fields":{"name":"keyword"}}"#),
+            false,
+            None,
+            false,
+        )
+        .unwrap();
         run(&storage, "test", OutputFormat::Json, None).unwrap();
     }
 
@@ -108,7 +116,15 @@ mod tests {
     fn test_stats_with_docs() {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::new(dir.path().to_str().unwrap());
-        new_index::run(&storage, "test", r#"{"fields":{"name":"keyword"}}"#, false).unwrap();
+        new_index::run(
+            &storage,
+            "test",
+            Some(r#"{"fields":{"name":"keyword"}}"#),
+            false,
+            None,
+            false,
+        )
+        .unwrap();
 
         let ndjson = dir.path().join("data.ndjson");
         let mut f = std::fs::File::create(&ndjson).unwrap();
@@ -128,7 +144,15 @@ mod tests {
     fn test_stats_with_compact_meta() {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::new(dir.path().to_str().unwrap());
-        new_index::run(&storage, "test", r#"{"fields":{"name":"keyword"}}"#, false).unwrap();
+        new_index::run(
+            &storage,
+            "test",
+            Some(r#"{"fields":{"name":"keyword"}}"#),
+            false,
+            None,
+            false,
+        )
+        .unwrap();
 
         // Manually inject compact metadata
         let mut config = storage.load_config("test").unwrap();

@@ -21,7 +21,15 @@ mod tests {
     fn test_drop_existing_index() {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::new(dir.path().to_str().unwrap());
-        new_index::run(&storage, "test", r#"{"fields":{"name":"keyword"}}"#, false).unwrap();
+        new_index::run(
+            &storage,
+            "test",
+            Some(r#"{"fields":{"name":"keyword"}}"#),
+            false,
+            None,
+            false,
+        )
+        .unwrap();
         assert!(storage.exists("test"));
 
         run(&storage, "test").unwrap();
