@@ -1,5 +1,7 @@
 mod commands;
 #[cfg(feature = "delta")]
+mod compact;
+#[cfg(feature = "delta")]
 mod delta;
 mod error;
 #[allow(dead_code)] // Wired into search command in a later task
@@ -152,6 +154,34 @@ enum Commands {
         #[arg(long)]
         as_of_version: Option<i64>,
     },
+
+    /// Tiered compaction worker: poll Delta, create segments, merge on schedule
+    #[cfg(feature = "delta")]
+    Compact {
+        /// Index name
+        name: String,
+        /// Rows per segment before commit
+        #[arg(long, default_value_t = 10_000)]
+        segment_size: usize,
+        /// Minutes between merge checks
+        #[arg(long, default_value_t = 5)]
+        merge_interval: u64,
+        /// Merge when segment count exceeds this
+        #[arg(long, default_value_t = 10)]
+        max_segments: usize,
+        /// Seconds between Delta polls
+        #[arg(long, default_value_t = 10)]
+        poll_interval: u64,
+        /// Force commit after N seconds even if under segment_size threshold
+        #[arg(long, default_value_t = 60)]
+        max_segment_age: u64,
+        /// One-shot: merge all segments into one and exit
+        #[arg(long, default_value_t = false)]
+        force_merge: bool,
+        /// One-shot: poll once, segment if needed, merge if needed, exit
+        #[arg(long, default_value_t = false)]
+        once: bool,
+    },
 }
 
 #[cfg(feature = "delta")]
@@ -219,6 +249,27 @@ async fn run_cli() {
             name,
             as_of_version,
         } => commands::reindex::run(&storage, &name, as_of_version).await,
+        Commands::Compact {
+            name,
+            segment_size,
+            merge_interval,
+            max_segments,
+            poll_interval,
+            max_segment_age,
+            force_merge,
+            once,
+        } => {
+            let opts = compact::CompactOptions {
+                segment_size,
+                merge_interval_secs: merge_interval * 60,
+                max_segments,
+                poll_interval_secs: poll_interval,
+                max_segment_age_secs: max_segment_age,
+                force_merge,
+                once,
+            };
+            commands::compact::run(&storage, &name, opts).await
+        }
     };
 
     handle_error(result, fmt);

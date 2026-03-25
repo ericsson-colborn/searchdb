@@ -23,6 +23,9 @@ pub enum SearchDbError {
     #[error("Delta Lake error: {0}")]
     #[allow(dead_code)]
     Delta(String),
+
+    #[error("Another writer is already running for index '{0}'. Only one compact worker can run per index.")]
+    WriterLocked(String),
 }
 
 pub type Result<T> = std::result::Result<T, SearchDbError>;

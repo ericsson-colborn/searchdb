@@ -48,6 +48,7 @@ pub async fn run(storage: &Storage, name: &str, source: &str, schema_json: &str)
         schema,
         delta_source: Some(source.to_string()),
         index_version: Some(version),
+        compact: None,
     };
     storage.save_config(name, &config)?;
 

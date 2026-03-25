@@ -26,6 +26,7 @@ pub fn run(storage: &Storage, name: &str, schema_json: &str, overwrite: bool) ->
         schema,
         delta_source: None,
         index_version: None,
+        compact: None,
     };
     storage.save_config(name, &config)?;
 
