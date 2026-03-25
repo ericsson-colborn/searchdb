@@ -2,6 +2,7 @@ mod commands;
 #[cfg(feature = "delta")]
 mod delta;
 mod error;
+#[allow(dead_code)] // Wired into search command in a later task
 mod es_dsl;
 mod schema;
 mod searcher;

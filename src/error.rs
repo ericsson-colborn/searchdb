@@ -21,6 +21,7 @@ pub enum SearchDbError {
     Json(#[from] serde_json::Error),
 
     #[error("Delta Lake error: {0}")]
+    #[allow(dead_code)]
     Delta(String),
 }
 
