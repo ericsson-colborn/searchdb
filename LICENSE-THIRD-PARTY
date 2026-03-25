@@ -1,0 +1,32 @@
+Third-Party Licenses
+====================
+
+This file documents third-party code vendored into this project.
+
+--------------------------------------------------------------------------------
+
+quickwit — StableLogMergePolicy
+Source: https://github.com/quickwit-oss/quickwit
+File:   quickwit/quickwit-indexing/src/merge_policy/stable_log_merge_policy.rs
+Used in: src/merge_policy.rs
+
+Copyright 2021-Present Datadog, Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Modifications for SearchDB:
+- Replaced quickwit SplitMetadata with SegmentMeta (lightweight equivalent)
+- Removed dependencies on quickwit-config, quickwit-metastore, tracing, time crate
+- Simplified output to Vec<Vec<SegmentMeta>> instead of Vec<MergeOperation>
+- Removed maturation_period (SearchDB uses size-only maturity)
+- Removed time_range-based ordering
