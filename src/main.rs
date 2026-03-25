@@ -2,6 +2,7 @@ mod commands;
 #[cfg(feature = "delta")]
 mod delta;
 mod error;
+mod es_dsl;
 mod schema;
 mod searcher;
 mod storage;
