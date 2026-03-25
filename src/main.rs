@@ -5,6 +5,8 @@ mod compact;
 mod delta;
 mod error;
 mod es_dsl;
+#[cfg(feature = "delta")]
+mod ingest;
 mod schema;
 mod searcher;
 mod storage;
