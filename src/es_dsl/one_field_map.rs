@@ -49,3 +49,50 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for OneFieldMap<T> {
         deserializer.deserialize_map(OneFieldVisitor(PhantomData))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_one_field_map_string_value() {
+        let json = r#"{"status": "active"}"#;
+        let ofm: OneFieldMap<String> = serde_json::from_str(json).unwrap();
+        assert_eq!(ofm.field, "status");
+        assert_eq!(ofm.value, "active");
+    }
+
+    #[test]
+    fn test_one_field_map_object_value() {
+        #[derive(Debug, Deserialize)]
+        struct Inner {
+            value: String,
+        }
+        let json = r#"{"status": {"value": "active"}}"#;
+        let ofm: OneFieldMap<Inner> = serde_json::from_str(json).unwrap();
+        assert_eq!(ofm.field, "status");
+        assert_eq!(ofm.value.value, "active");
+    }
+
+    #[test]
+    fn test_one_field_map_array_value() {
+        let json = r#"{"status": ["active", "pending"]}"#;
+        let ofm: OneFieldMap<Vec<String>> = serde_json::from_str(json).unwrap();
+        assert_eq!(ofm.field, "status");
+        assert_eq!(ofm.value, vec!["active", "pending"]);
+    }
+
+    #[test]
+    fn test_one_field_map_empty_object_fails() {
+        let json = r#"{}"#;
+        let result: std::result::Result<OneFieldMap<String>, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_one_field_map_multiple_fields_fails() {
+        let json = r#"{"field1": "a", "field2": "b"}"#;
+        let result: std::result::Result<OneFieldMap<String>, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+}
