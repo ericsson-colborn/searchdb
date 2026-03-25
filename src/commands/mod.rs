@@ -2,6 +2,8 @@
 pub mod compact;
 #[cfg(feature = "delta")]
 pub mod connect_delta;
+#[cfg(feature = "delta")]
+pub mod ingest;
 pub mod drop;
 pub mod get;
 pub mod index;
