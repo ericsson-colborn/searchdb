@@ -71,14 +71,35 @@ JSON booleans are stored as keyword strings (`"true"` / `"false"`). This keeps t
 
 ## Inference Entry Points
 
-Schema inference activates in three scenarios:
+Schema inference activates in four scenarios, listed in order of preference:
 
-### 1. `searchdb new` Without `--schema`
+### 0. `searchdb new --infer-from <file>` (PRIMARY — User-Directed Inference)
 
-Currently, `searchdb new` requires `--schema`. With inference:
+The recommended path for most users. Provide a sample file and let SearchDB figure out the types:
 
-- If `--schema` is provided: use it exactly (current behavior, unchanged).
-- If `--schema` is omitted: create the index with an empty schema (`{"fields": {}}`). The schema will be populated on first `searchdb index` call.
+```bash
+# Infer schema from a sample NDJSON file
+searchdb new labs --infer-from data/sample.ndjson
+
+# Preview the inferred schema without creating anything
+searchdb new labs --infer-from data/sample.ndjson --dry-run
+# prints: {"fields":{"name":"keyword","age":"numeric","created":"date"}}
+
+# Preview, tweak, then create with overrides
+searchdb new labs --infer-from data/sample.ndjson --dry-run
+# user sees "notes" was inferred as keyword, wants text
+searchdb new labs --infer-from data/sample.ndjson --schema '{"fields":{"notes":"text"}}'
+```
+
+**`--infer-from <path>`**: Read the file, infer field types from all rows, create the index with the inferred schema. The file is not indexed — just used for inference. Index starts empty.
+
+**`--dry-run`**: Print the inferred schema as JSON to stdout and exit. Do not create the index. Allows the user to review and tweak before committing.
+
+**`--infer-from` + `--schema` (combined)**: The `--schema` acts as an override — declared fields use the explicit type, other fields are inferred from the file. This is the recommended way to mark specific fields as `text` instead of the default `keyword`.
+
+### 1. `searchdb new` Without `--schema` and Without `--infer-from`
+
+- If neither `--schema` nor `--infer-from` is provided: create the index with an empty schema (`{"fields": {}}`). The schema will be populated on first `searchdb index` call via schema evolution.
 
 An empty-schema index is valid. It has the three internal fields (`_id`, `_source`, `__present__`) and no user fields. Documents indexed into it trigger schema inference and evolution.
 
@@ -93,9 +114,18 @@ When indexing NDJSON into an index whose schema does not cover all fields in the
 
 See "Schema Evolution and Tantivy Immutability" below for the rebuild strategy.
 
-### 3. `searchdb connect-delta` Without `--schema`
+### 3. `searchdb connect-delta` Without `--schema` (Auto-Inference from Arrow)
 
-When connecting to a Delta Lake table without `--schema`:
+When connecting to a Delta Lake table without `--schema`, the Delta table's Arrow schema is used directly — no sample file needed:
+
+```bash
+# Schema inferred automatically from Delta table metadata
+searchdb connect-delta labs --source /data/labs
+
+# Preview what would be inferred
+searchdb connect-delta labs --source /data/labs --dry-run
+# prints: {"fields":{"name":"keyword","age":"numeric","created":"date"}}
+```
 
 - **Primary strategy: Arrow schema mapping.** Delta tables have an explicit Arrow schema. Map Arrow types to SearchDB field types:
 
@@ -236,10 +266,10 @@ When `--schema` is provided as a partial schema alongside inference (Option 1 ab
 ### Modified Code
 
 - `src/storage.rs`: Add `inferred: bool` field to `IndexConfig` (with `#[serde(default)]` for backward compat).
-- `src/commands/new_index.rs`: Make `schema_json` parameter `Option<&str>`. If `None`, use empty schema.
+- `src/commands/new_index.rs`: Make `schema_json` parameter `Option<&str>`. Add `infer_from: Option<&str>` and `dry_run: bool`. If `infer_from`, read file and infer. If `dry_run`, print and exit.
 - `src/commands/index.rs`: Before indexing, check for unknown fields. If schema is inferred, trigger evolution. If explicit, skip unknown fields.
-- `src/commands/connect_delta.rs`: Make `schema_json` parameter `Option<&str>`. If `None`, infer from Arrow schema.
-- `src/main.rs`: Change `--schema` from required to optional in `New` and `ConnectDelta` command variants.
+- `src/commands/connect_delta.rs`: Make `schema_json` parameter `Option<&str>`. Add `dry_run: bool`. If no schema, infer from Arrow. If `dry_run`, print and exit.
+- `src/main.rs`: Change `--schema` from required to optional. Add `--infer-from` and `--dry-run` flags to `New` and `ConnectDelta` command variants.
 
 ### Not Modified
 
@@ -266,7 +296,11 @@ When `--schema` is provided as a partial schema alongside inference (Option 1 ab
 
 - [ ] `searchdb new myindex` (no `--schema`) succeeds and creates an index with empty schema and `inferred: true`.
 - [ ] `searchdb new myindex --schema '{...}'` works exactly as before (backward compatible).
+- [ ] `searchdb new myindex --infer-from data.ndjson` reads the file, infers schema, creates index (empty, ready to index).
+- [ ] `searchdb new myindex --infer-from data.ndjson --dry-run` prints inferred schema JSON to stdout and exits without creating anything.
+- [ ] `searchdb new myindex --infer-from data.ndjson --schema '{"fields":{"notes":"text"}}'` uses `text` for `notes`, infers everything else.
 - [ ] `searchdb connect-delta myindex --source <uri>` (no `--schema`) infers schema from Arrow schema.
+- [ ] `searchdb connect-delta myindex --source <uri> --dry-run` prints inferred Arrow schema mapping and exits.
 - [ ] `searchdb connect-delta myindex --source <uri> --schema '{...}'` works exactly as before.
 
 ### Arrow Schema Mapping
