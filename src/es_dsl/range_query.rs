@@ -62,28 +62,28 @@ fn compile_numeric(
     params: &RangeQueryParams,
 ) -> Result<Box<dyn Query>> {
     let lower = if let Some(ref v) = params.gte {
-        let n = v.as_f64().ok_or_else(|| {
-            SearchDbError::Schema(format!("range gte expected number, got {v}"))
-        })?;
+        let n = v
+            .as_f64()
+            .ok_or_else(|| SearchDbError::Schema(format!("range gte expected number, got {v}")))?;
         Bound::Included(Term::from_field_f64(field, n))
     } else if let Some(ref v) = params.gt {
-        let n = v.as_f64().ok_or_else(|| {
-            SearchDbError::Schema(format!("range gt expected number, got {v}"))
-        })?;
+        let n = v
+            .as_f64()
+            .ok_or_else(|| SearchDbError::Schema(format!("range gt expected number, got {v}")))?;
         Bound::Excluded(Term::from_field_f64(field, n))
     } else {
         Bound::Unbounded
     };
 
     let upper = if let Some(ref v) = params.lte {
-        let n = v.as_f64().ok_or_else(|| {
-            SearchDbError::Schema(format!("range lte expected number, got {v}"))
-        })?;
+        let n = v
+            .as_f64()
+            .ok_or_else(|| SearchDbError::Schema(format!("range lte expected number, got {v}")))?;
         Bound::Included(Term::from_field_f64(field, n))
     } else if let Some(ref v) = params.lt {
-        let n = v.as_f64().ok_or_else(|| {
-            SearchDbError::Schema(format!("range lt expected number, got {v}"))
-        })?;
+        let n = v
+            .as_f64()
+            .ok_or_else(|| SearchDbError::Schema(format!("range lt expected number, got {v}")))?;
         Bound::Excluded(Term::from_field_f64(field, n))
     } else {
         Bound::Unbounded
@@ -158,8 +158,7 @@ mod tests {
             fields: BTreeMap::from([("created_at".into(), FieldType::Date)]),
         };
         let tv = schema.build_tantivy_schema();
-        let json =
-            r#"{"range": {"created_at": {"gte": "2024-01-01T00:00:00Z", "lt": "2025-01-01T00:00:00Z"}}}"#;
+        let json = r#"{"range": {"created_at": {"gte": "2024-01-01T00:00:00Z", "lt": "2025-01-01T00:00:00Z"}}}"#;
         let dsl: ElasticQueryDsl = serde_json::from_str(json).unwrap();
         let query = dsl.compile(&tv, &schema);
         assert!(query.is_ok(), "compile failed: {:?}", query.err());

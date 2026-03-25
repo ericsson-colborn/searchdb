@@ -32,9 +32,9 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for OneFieldMap<T> {
             where
                 M: MapAccess<'de>,
             {
-                let (field, value) = map
-                    .next_entry::<String, T>()?
-                    .ok_or_else(|| de::Error::custom("expected a single-field object, got empty"))?;
+                let (field, value) = map.next_entry::<String, T>()?.ok_or_else(|| {
+                    de::Error::custom("expected a single-field object, got empty")
+                })?;
 
                 if map.next_key::<String>()?.is_some() {
                     return Err(de::Error::custom(

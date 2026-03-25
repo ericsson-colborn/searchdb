@@ -63,8 +63,7 @@ impl MatchPhraseQuery {
             .collect();
 
         if slop > 0 {
-            let terms_with_offset: Vec<(usize, Term)> =
-                terms.into_iter().enumerate().collect();
+            let terms_with_offset: Vec<(usize, Term)> = terms.into_iter().enumerate().collect();
             Ok(Box::new(PhraseQuery::new_with_offset_and_slop(
                 terms_with_offset,
                 slop,
