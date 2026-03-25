@@ -29,6 +29,13 @@ deltalake = { version = "0.25", features = ["datafusion"], optional = true }
 arrow = { version = "54", optional = true }
 parquet = { version = "54", optional = true }
 
+# Arrow format readers for ingest
+arrow-csv = { version = "54", optional = true }
+arrow-json = { version = "54", optional = true }
+
+# Glob pattern expansion for ingest
+glob = { version = "0.3", optional = true }
+
 # Async runtime (delta-rs is async)
 tokio = { version = "1", features = ["full"], optional = true }
 
@@ -55,7 +62,7 @@ regex = "1"
 
 [features]
 default = ["delta"]
-delta = ["dep:deltalake", "dep:arrow", "dep:parquet", "dep:tokio"]
+delta = ["dep:deltalake", "dep:arrow", "dep:parquet", "dep:tokio", "dep:glob", "dep:arrow-csv", "dep:arrow-json"]
 serve = ["dep:axum", "dep:tokio"]
 
 [dev-dependencies]
