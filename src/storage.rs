@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-/// Compaction worker metadata — persisted to searchdb.json.
+/// Compaction worker metadata — persisted to searchdb.json (legacy filename, kept for compatibility).
 /// Written by the compact worker; ignored by search/get clients.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactMeta {
@@ -35,13 +35,13 @@ pub struct IndexConfig {
     pub compact: Option<CompactMeta>,
 }
 
-/// Manages the on-disk layout for SearchDB indexes.
+/// Manages the on-disk layout for deltasearch indexes.
 ///
 /// Layout:
 /// ```text
 /// {data_dir}/
 /// ├── {index_name}/
-/// │   ├── searchdb.json   ← schema + delta metadata
+/// │   ├── searchdb.json   ← schema + delta metadata (legacy filename, kept for compatibility)
 /// │   └── index/          ← tantivy segment files
 /// ```
 pub struct Storage {

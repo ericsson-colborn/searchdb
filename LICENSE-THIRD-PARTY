@@ -24,7 +24,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-Modifications for SearchDB:
+Modifications for deltasearch:
 - Replaced quickwit SplitMetadata with SegmentMeta (lightweight equivalent)
 - Removed dependencies on quickwit-config, quickwit-metastore, tracing, time crate
 - Simplified output to Vec<Vec<SegmentMeta>> instead of Vec<MergeOperation>

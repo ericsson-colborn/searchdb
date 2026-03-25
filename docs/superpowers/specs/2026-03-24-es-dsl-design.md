@@ -151,16 +151,16 @@ Java date format strings (the ES `format` parameter in range queries) are deferr
 
 ```bash
 # Query string (existing)
-searchdb search myindex -q '+name:"glucose"'
+dsrch search myindex -q '+name:"glucose"'
 
 # ES DSL via --dsl flag (new)
-searchdb search myindex --dsl '{"bool":{"must":[{"term":{"name":"glucose"}}]}}'
+dsrch search myindex --dsl '{"bool":{"must":[{"term":{"name":"glucose"}}]}}'
 
 # ES DSL via stdin with - marker
-echo '{"match":{"notes":"diabetes"}}' | searchdb search myindex --dsl -
+echo '{"match":{"notes":"diabetes"}}' | dsrch search myindex --dsl -
 
 # ES DSL from file
-searchdb search myindex --dsl @query.json
+dsrch search myindex --dsl @query.json
 ```
 
 **Design:**
@@ -171,7 +171,7 @@ searchdb search myindex --dsl @query.json
 
 ### Why not a separate command?
 
-A separate `searchdb dsl-search` command would fragment the CLI. The search command already has all the plumbing for output, pagination, and field projection. Adding `--dsl` as an alternative to `-q` is the minimal change.
+A separate `dsrch dsl-search` command would fragment the CLI. The search command already has all the plumbing for output, pagination, and field projection. Adding `--dsl` as an alternative to `-q` is the minimal change.
 
 ## File Structure
 
@@ -354,16 +354,16 @@ All vendored code originates from `quickwit-oss/quickwit` (Apache 2.0). We will:
 
 ### Functional
 
-1. `searchdb search myindex --dsl '{"term":{"status":"active"}}'` returns documents where `status` is exactly "active"
-2. `searchdb search myindex --dsl '{"match":{"notes":"blood glucose"}}'` returns documents matching tokenized/stemmed text search
-3. `searchdb search myindex --dsl '{"bool":{"must":[{"term":{"status":"active"}},{"range":{"age":{"gte":18}}}]}}'` returns documents matching compound boolean query
-4. `searchdb search myindex --dsl '{"terms":{"status":["active","pending"]}}'` returns documents where status is "active" OR "pending"
-5. `searchdb search myindex --dsl '{"match_phrase":{"notes":"blood glucose level"}}'` returns documents with exact phrase
-6. `searchdb search myindex --dsl '{"range":{"created_at":{"gte":"2024-01-01T00:00:00Z","lt":"2025-01-01T00:00:00Z"}}}'` returns documents in date range
-7. `searchdb search myindex --dsl '{"exists":{"field":"status"}}'` returns documents where "status" is not null
-8. `searchdb search myindex --dsl '{"match_all":{}}'` returns all documents
-9. Stdin input works: `echo '{"match":{"notes":"test"}}' | searchdb search myindex --dsl -`
-10. File input works: `searchdb search myindex --dsl @query.json`
+1. `dsrch search myindex --dsl '{"term":{"status":"active"}}'` returns documents where `status` is exactly "active"
+2. `dsrch search myindex --dsl '{"match":{"notes":"blood glucose"}}'` returns documents matching tokenized/stemmed text search
+3. `dsrch search myindex --dsl '{"bool":{"must":[{"term":{"status":"active"}},{"range":{"age":{"gte":18}}}]}}'` returns documents matching compound boolean query
+4. `dsrch search myindex --dsl '{"terms":{"status":["active","pending"]}}'` returns documents where status is "active" OR "pending"
+5. `dsrch search myindex --dsl '{"match_phrase":{"notes":"blood glucose level"}}'` returns documents with exact phrase
+6. `dsrch search myindex --dsl '{"range":{"created_at":{"gte":"2024-01-01T00:00:00Z","lt":"2025-01-01T00:00:00Z"}}}'` returns documents in date range
+7. `dsrch search myindex --dsl '{"exists":{"field":"status"}}'` returns documents where "status" is not null
+8. `dsrch search myindex --dsl '{"match_all":{}}'` returns all documents
+9. Stdin input works: `echo '{"match":{"notes":"test"}}' | dsrch search myindex --dsl -`
+10. File input works: `dsrch search myindex --dsl @query.json`
 11. `-q` and `--dsl` are mutually exclusive -- using both is a CLI error
 12. `--limit`, `--offset`, `--fields`, `--score` work with `--dsl`
 13. DSL search works with gap rows (two-tier search)

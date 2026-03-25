@@ -1,4 +1,4 @@
-# Quickwit Component Evaluation for SearchDB
+# Quickwit Component Evaluation for deltasearch
 
 **Date:** 2026-03-24
 **Status:** Research complete
@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-We evaluated four quickwit subsystems for potential reuse in SearchDB: quickwit-indexing, quickwit-metastore, quickwit-directories, and the merge policy code. The findings are mixed. The merge policy algorithm (StableLogMergePolicy) is the standout win -- it solves exactly the problem our tiered compaction worker needs, and it can be extracted in ~300 lines. The rest of quickwit's indexing and metastore infrastructure is tightly coupled to a distributed actor system that is fundamentally different from SearchDB's single-binary, single-writer model. Borrowing ideas from the metastore's split lifecycle model and the directories crate's bundle format is worthwhile, but taking actual code is not.
+We evaluated four quickwit subsystems for potential reuse in deltasearch: quickwit-indexing, quickwit-metastore, quickwit-directories, and the merge policy code. The findings are mixed. The merge policy algorithm (StableLogMergePolicy) is the standout win -- it solves exactly the problem our tiered compaction worker needs, and it can be extracted in ~300 lines. The rest of quickwit's indexing and metastore infrastructure is tightly coupled to a distributed actor system that is fundamentally different from deltasearch's single-binary, single-writer model. Borrowing ideas from the metastore's split lifecycle model and the directories crate's bundle format is worthwhile, but taking actual code is not.
 
 ---
 
@@ -53,7 +53,7 @@ The crate is the heart of quickwit's write path. It handles reading data from Ka
 - Concurrent upload semaphores (separate limits for indexing vs. merge uploads).
 - Builds a split payload streamer from: split files + serialized field metadata + hotcache bytes.
 
-### What's Useful for SearchDB
+### What's Useful for deltasearch
 
 **1. StableLogMergePolicy algorithm (HIGH VALUE)**
 Located in `merge_policy/stable_log_merge_policy.rs`. This is a logarithmic tiering strategy that:
@@ -64,7 +64,7 @@ Located in `merge_policy/stable_log_merge_policy.rs`. This is a logarithmic tier
 - Has a maturity concept: splits above the target size are "mature" and excluded from merge consideration.
 - Has a `finalize_operations()` method for end-of-day style final merges.
 
-This is directly applicable to SearchDB's Level 2 merge strategy. Our current spec uses a simple "group by exponential bucket, merge if count > factor" approach. The StableLogMergePolicy is a more sophisticated version of the same idea.
+This is directly applicable to deltasearch's Level 2 merge strategy. Our current spec uses a simple "group by exponential bucket, merge if count > factor" approach. The StableLogMergePolicy is a more sophisticated version of the same idea.
 
 **2. Memory-based commit triggering (MEDIUM VALUE)**
 The pattern of tracking `index_writer.mem_usage()` before/after each document add, and triggering commit when heap exceeds a threshold. This is a better approach than our current "commit after N documents" strategy because it accounts for variable document sizes. A 10KB JSON document uses more memory than a 100-byte one.
@@ -73,21 +73,21 @@ The pattern of tracking `index_writer.mem_usage()` before/after each document ad
 Alternative merge policy that targets a fixed number of merge operations rather than a fixed segment size. Useful when partition sizes vary dramatically (e.g., multi-tenant with small and large tenants). Groups splits by `num_merge_ops` count and only merges within the same merge level. We probably don't need this for v1, but it's worth knowing about.
 
 **4. Controlled directory pattern (LOW VALUE)**
-`ControlledDirectory` wraps tantivy's directory with a kill switch and progress tracking. Uses `ArcSwap<IoControls>` for hot-swappable configuration. Useful for cancelling long-running merges, but SearchDB's compact worker handles this via SIGINT/SIGTERM and tantivy's built-in merge cancellation.
+`ControlledDirectory` wraps tantivy's directory with a kill switch and progress tracking. Uses `ArcSwap<IoControls>` for hot-swappable configuration. Useful for cancelling long-running merges, but deltasearch's compact worker handles this via SIGINT/SIGTERM and tantivy's built-in merge cancellation.
 
 ### What's NOT Useful (and Why)
 
-**Actor system:** quickwit-indexing is built on `quickwit-actors`, a custom actor framework with typed mailboxes, supervision trees, health checks, and exponential backoff restarts. SearchDB is a single-threaded event loop, not a distributed actor system. The actor infrastructure is ~40% of the crate's code and provides zero value to us.
+**Actor system:** quickwit-indexing is built on `quickwit-actors`, a custom actor framework with typed mailboxes, supervision trees, health checks, and exponential backoff restarts. deltasearch is a single-threaded event loop, not a distributed actor system. The actor infrastructure is ~40% of the crate's code and provides zero value to us.
 
-**Source connectors:** Kafka, Kinesis, Pulsar, GCP PubSub, SQS sources are irrelevant. SearchDB reads from Delta Lake only.
+**Source connectors:** Kafka, Kinesis, Pulsar, GCP PubSub, SQS sources are irrelevant. deltasearch reads from Delta Lake only.
 
-**DocProcessor/VRL transforms:** Document parsing, VRL scripting, OTLP format support. SearchDB handles its own JSON parsing and schema validation.
+**DocProcessor/VRL transforms:** Document parsing, VRL scripting, OTLP format support. deltasearch handles its own JSON parsing and schema validation.
 
-**Split bundling format:** quickwit bundles all segment files + hotcache into a single file for object storage upload. SearchDB stores the tantivy index directory directly on local disk. We don't need a bundle format unless we move to remote-only storage.
+**Split bundling format:** quickwit bundles all segment files + hotcache into a single file for object storage upload. deltasearch stores the tantivy index directory directly on local disk. We don't need a bundle format unless we move to remote-only storage.
 
-**Cooperative indexing:** Coordinates multiple concurrent indexing pipelines. SearchDB has one writer per index.
+**Cooperative indexing:** Coordinates multiple concurrent indexing pipelines. deltasearch has one writer per index.
 
-**Uploader/Publisher/Sequencer:** These actors handle remote storage uploads, metastore registration, and ordering guarantees for a distributed system. SearchDB writes to local disk and tracks state in `searchdb.json`.
+**Uploader/Publisher/Sequencer:** These actors handle remote storage uploads, metastore registration, and ordering guarantees for a distributed system. deltasearch writes to local disk and tracks state in `searchdb.json`.
 
 ### Dependency Cost
 
@@ -95,7 +95,7 @@ quickwit-indexing has 15+ internal quickwit crate dependencies (quickwit-actors,
 
 ### Recommendation: **Vendor the merge policy, inspire from memory tracking**
 
-- **Vendor** `StableLogMergePolicy` (~200 lines of algorithm + ~100 lines of supporting types). Strip the quickwit-specific types (SplitMetadata, MergeOperation) and replace with SearchDB equivalents. The algorithm itself is pure logic with no external dependencies.
+- **Vendor** `StableLogMergePolicy` (~200 lines of algorithm + ~100 lines of supporting types). Strip the quickwit-specific types (SplitMetadata, MergeOperation) and replace with deltasearch equivalents. The algorithm itself is pure logic with no external dependencies.
 - **Inspire** from the memory-based commit trigger pattern. Implement our own version using `index_writer.mem_usage()` alongside the document count threshold.
 - **Skip** everything else. The actor system, source connectors, split bundling, and distributed coordination are architecturally incompatible.
 
@@ -149,32 +149,32 @@ The file-backed metastore maintains a manifest file listing all indexes and thei
 - `mutate()` method pattern: acquire lock, apply changes, persist to storage; on storage failure, discard cached copy to force reload on next access.
 - Optional background polling for read replicas to detect external changes.
 
-### What's Useful for SearchDB
+### What's Useful for deltasearch
 
 **1. Split lifecycle state machine (MEDIUM VALUE)**
-The Staged -> Published -> MarkedForDeletion state model is a clean way to handle the "segment is being written but not yet visible to readers" problem. In SearchDB's compact worker, we currently rely on tantivy's `meta.json` atomicity for this. But if we ever move to a model where segments need explicit promotion (e.g., remote storage), the three-state model is the right abstraction.
+The Staged -> Published -> MarkedForDeletion state model is a clean way to handle the "segment is being written but not yet visible to readers" problem. In deltasearch's compact worker, we currently rely on tantivy's `meta.json` atomicity for this. But if we ever move to a model where segments need explicit promotion (e.g., remote storage), the three-state model is the right abstraction.
 
-Right now, our `searchdb.json` is a flat file with `index_version`. We could evolve it to track per-segment state for better operational visibility (`searchdb stats` showing which segments are being merged, which are mature, etc.).
+Right now, our `searchdb.json` is a flat file with `index_version`. We could evolve it to track per-segment state for better operational visibility (`dsrch stats` showing which segments are being merged, which are mature, etc.).
 
 **2. Checkpoint delta model (LOW-MEDIUM VALUE)**
-The `SourceCheckpointDelta` concept of tracking `(from, to]` progress intervals with forward-only validation is elegant. It prevents duplicate indexing while tolerating gaps. SearchDB currently uses a single `index_version` integer (Delta Lake version watermark), which is simpler but less flexible. If we ever support multiple Delta sources per index, the per-partition checkpoint model becomes valuable.
+The `SourceCheckpointDelta` concept of tracking `(from, to]` progress intervals with forward-only validation is elegant. It prevents duplicate indexing while tolerating gaps. deltasearch currently uses a single `index_version` integer (Delta Lake version watermark), which is simpler but less flexible. If we ever support multiple Delta sources per index, the per-partition checkpoint model becomes valuable.
 
 **3. SplitMetadata structure (LOW VALUE)**
 The `SplitMetadata` struct tracks useful per-segment information: `num_docs`, `uncompressed_docs_size_in_bytes`, `time_range`, `num_merge_ops`, `create_timestamp`, `maturity`. Some of this feeds into the merge policy (e.g., `num_merge_ops` determines which merge level a segment belongs to, `maturity` determines if it should be considered for merging). We need equivalent metadata for our compact worker's merge decisions.
 
 ### What's NOT Useful (and Why)
 
-**PostgreSQL backend:** SearchDB is single-binary, zero-deps. A Postgres dependency would violate the core design principle. The entire `postgres/` directory (11 files + SQL queries) is irrelevant.
+**PostgreSQL backend:** deltasearch is single-binary, zero-deps. A Postgres dependency would violate the core design principle. The entire `postgres/` directory (11 files + SQL queries) is irrelevant.
 
-**MetastoreService trait / gRPC interface:** The metastore is accessed via a gRPC service (`MetastoreServiceClient`) in quickwit. SearchDB reads/writes `searchdb.json` directly. We don't need a service abstraction.
+**MetastoreService trait / gRPC interface:** The metastore is accessed via a gRPC service (`MetastoreServiceClient`) in quickwit. deltasearch reads/writes `searchdb.json` directly. We don't need a service abstraction.
 
-**Index template matching:** quickwit supports index templates (patterns that auto-create indexes for matching data). SearchDB creates indexes explicitly.
+**Index template matching:** quickwit supports index templates (patterns that auto-create indexes for matching data). deltasearch creates indexes explicitly.
 
 **Shard management:** Per-source shard tracking for Kafka/Kinesis partitions. Irrelevant for Delta Lake.
 
-**Manifest system:** The Creating/Active/Deleting index states with manifest tracking handles distributed cleanup scenarios. SearchDB creates indexes locally and atomically -- no need for distributed state tracking.
+**Manifest system:** The Creating/Active/Deleting index states with manifest tracking handles distributed cleanup scenarios. deltasearch creates indexes locally and atomically -- no need for distributed state tracking.
 
-**Lazy loading / polling:** Designed for large metastore instances with many indexes that need lazy initialization and change detection. SearchDB loads one index at a time.
+**Lazy loading / polling:** Designed for large metastore instances with many indexes that need lazy initialization and change detection. deltasearch loads one index at a time.
 
 ### Dependency Cost
 
@@ -213,23 +213,23 @@ quickwit-directories provides custom implementations of tantivy's `Directory` tr
 
 6. **DebugProxyDirectory** -- Transparent proxy that records all read operations (file path, byte offset, count, duration, timestamp). Used for hotcache generation (identifies which byte ranges to pre-warm) and performance debugging.
 
-### What's Useful for SearchDB
+### What's Useful for deltasearch
 
 **1. UnionDirectory for merge operations (MEDIUM VALUE)**
 The merge executor uses `UnionDirectory` to present multiple segments as a single tantivy index for merging. This is the same pattern our compact worker's Level 2 merge would use if we ever need to merge segments from different directories. Currently, tantivy's built-in `IndexWriter::merge(&segment_ids)` handles this for us because all our segments live in one directory. But if we move to a model with segments in separate directories (e.g., downloaded from remote storage for merge), the UnionDirectory pattern is the solution.
 
 **2. BundleDirectory format for remote storage (LOW VALUE, FUTURE)**
-If SearchDB eventually supports searching directly from object storage (without a local copy), the bundle format is ideal: one GET request retrieves the entire split, and the footer-based metadata allows efficient seeks. But this is a post-v1 concern. Our current model is local disk only.
+If deltasearch eventually supports searching directly from object storage (without a local copy), the bundle format is ideal: one GET request retrieves the entire split, and the footer-based metadata allows efficient seeks. But this is a post-v1 concern. Our current model is local disk only.
 
 **3. HotDirectory / caching patterns (LOW VALUE, FUTURE)**
-The hotcache concept (pre-warm term dictionaries and store indices) is valuable for reducing cold-start latency when opening indexes. But it only matters for remote storage where each read is an HTTP request. On local disk (SearchDB's model), the OS page cache handles this for free.
+The hotcache concept (pre-warm term dictionaries and store indices) is valuable for reducing cold-start latency when opening indexes. But it only matters for remote storage where each read is an HTTP request. On local disk (deltasearch's model), the OS page cache handles this for free.
 
 **4. DebugProxyDirectory for profiling (LOW VALUE)**
 Useful for understanding access patterns during search or indexing. Could be wrapped around our index directory during development to identify optimization opportunities. Very small (~100 lines) and self-contained.
 
 ### What's NOT Useful (and Why)
 
-**StorageDirectory:** Depends on `quickwit-storage`, which is a heavy abstraction over S3/GCS/local with retry logic, rate limiting, and credential management. SearchDB uses `deltalake` for blob storage access (reading Delta tables) and tantivy's `MmapDirectory` for the local index. No need for a custom storage layer.
+**StorageDirectory:** Depends on `quickwit-storage`, which is a heavy abstraction over S3/GCS/local with retry logic, rate limiting, and credential management. deltasearch uses `deltalake` for blob storage access (reading Delta tables) and tantivy's `MmapDirectory` for the local index. No need for a custom storage layer.
 
 **CachingDirectory:** Only relevant for remote storage. On local disk, OS page cache provides equivalent functionality.
 
@@ -240,7 +240,7 @@ quickwit-directories depends on quickwit-common, quickwit-storage, tantivy, asyn
 ### Recommendation: **Skip for now, revisit for remote storage**
 
 - **Skip** the entire crate as a dependency or vendor. The local-disk model makes most of these irrelevant, and the quickwit-storage dependency makes vendoring impractical without significant rewrites.
-- **Bookmark** the BundleDirectory format and HotDirectory pattern for when/if SearchDB adds remote storage support. At that point, vendor BundleDirectory (~200 lines) and the hotcache generation logic (~300 lines) with our own storage abstraction replacing quickwit-storage.
+- **Bookmark** the BundleDirectory format and HotDirectory pattern for when/if deltasearch adds remote storage support. At that point, vendor BundleDirectory (~200 lines) and the hotcache generation logic (~300 lines) with our own storage abstraction replacing quickwit-storage.
 - **Optionally inspire** from UnionDirectory if our merge executor needs to combine segments from different directories.
 
 ### Estimated Lines if Vendoring (Future)
@@ -284,7 +284,7 @@ Quickwit provides three alternatives:
 - Returns no merge operations. Used during bulk indexing when merges should be deferred.
 - Equivalent to tantivy's `NoMergePolicy`.
 
-### Comparison with SearchDB's Planned Merge Strategy
+### Comparison with deltasearch's Planned Merge Strategy
 
 Our tiered compaction spec describes:
 - "Group segments into tiers by document count (exponential buckets)."
@@ -293,7 +293,7 @@ Our tiered compaction spec describes:
 
 This is essentially a simplified version of StableLogMergePolicy. The key differences:
 
-| Feature | SearchDB Spec | StableLogMergePolicy |
+| Feature | deltasearch Spec | StableLogMergePolicy |
 |---------|--------------|---------------------|
 | Level sizing | Exponential buckets (unspecified base) | 3x growth factor, explicit |
 | Ordering | Not specified | Timestamp-based, deterministic |

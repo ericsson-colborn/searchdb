@@ -1,29 +1,29 @@
-# SearchDB (deltasearch)
+# deltasearch
 
 **Embedded search for the lakehouse. ES in your pocket.**
 
-SearchDB is a single-binary search engine that combines tantivy (Rust full-text search) with Delta Lake (versioned data lake). Point it at JSON files or blob storage and you're searching in minutes -- no cluster, no daemon, no JVM. The index is a disposable cache that builds itself from your data.
+deltasearch is a single-binary search engine that combines tantivy (Rust full-text search) with Delta Lake (versioned data lake). Point it at JSON files or blob storage and you're searching in minutes -- no cluster, no daemon, no JVM. The index is a disposable cache that builds itself from your data.
 
 ## Quick Start
 
 ```bash
 # 1. Create an index
-searchdb new products --schema '{"fields":{"name":"text","category":"keyword","price":"numeric"}}'
+dsrch new products --schema '{"fields":{"name":"text","category":"keyword","price":"numeric"}}'
 
 # 2. Index some data
 echo '{"_id":"1","name":"Wireless Headphones","category":"electronics","price":79.99}
 {"_id":"2","name":"Running Shoes","category":"sports","price":129.00}
-{"_id":"3","name":"Coffee Maker","category":"kitchen","price":49.99}' | searchdb index products
+{"_id":"3","name":"Coffee Maker","category":"kitchen","price":49.99}' | dsrch index products
 
 # 3. Search
-searchdb search products -q "headphones"
-searchdb search products -q '+category:"electronics" +price:[50 TO 100]'
+dsrch search products -q "headphones"
+dsrch search products -q '+category:"electronics" +price:[50 TO 100]'
 
 # 4. Get a single document
-searchdb get products 1
+dsrch get products 1
 
 # 5. Check index stats
-searchdb stats products
+dsrch stats products
 ```
 
 ## Features
@@ -68,8 +68,8 @@ searchdb stats products
                        │
             ┌──────────┴──────────┐
             │   search client     │
-            │  searchdb search    │
-            │  searchdb get       │
+            │  dsrch search       │
+            │  dsrch get          │
             │  (read-only, no     │
             │   credentials)      │
             └─────────────────────┘
@@ -97,24 +97,24 @@ Download prebuilt binaries from the [Releases](https://github.com/ericsson-colbo
 git clone https://github.com/ericsson-colborn/searchdb.git
 cd searchdb
 cargo build --release
-# Binary at target/release/searchdb
+# Binary at target/release/dsrch
 ```
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `searchdb new <name>` | Create a new index (schema optional) |
-| `searchdb index <name>` | Bulk index NDJSON from stdin or file |
-| `searchdb search <name> -q <query>` | Search with Lucene-like syntax |
-| `searchdb search <name> --dsl <json>` | Search with Elasticsearch query DSL |
-| `searchdb get <name> <doc_id>` | Retrieve a single document by `_id` |
-| `searchdb stats <name>` | Show index statistics |
-| `searchdb drop <name>` | Delete an index |
-| `searchdb connect-delta <name>` | Attach a Delta Lake source |
-| `searchdb compact <name>` | Run the compaction worker |
-| `searchdb sync <name>` | Manual incremental sync from Delta |
-| `searchdb reindex <name>` | Full rebuild from Delta source |
+| `dsrch new <name>` | Create a new index (schema optional) |
+| `dsrch index <name>` | Bulk index NDJSON from stdin or file |
+| `dsrch search <name> -q <query>` | Search with Lucene-like syntax |
+| `dsrch search <name> --dsl <json>` | Search with Elasticsearch query DSL |
+| `dsrch get <name> <doc_id>` | Retrieve a single document by `_id` |
+| `dsrch stats <name>` | Show index statistics |
+| `dsrch drop <name>` | Delete an index |
+| `dsrch connect-delta <name>` | Attach a Delta Lake source |
+| `dsrch compact <name>` | Run the compaction worker |
+| `dsrch sync <name>` | Manual incremental sync from Delta |
+| `dsrch reindex <name>` | Full rebuild from Delta source |
 
 ## Documentation
 

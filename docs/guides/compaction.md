@@ -16,7 +16,7 @@ Both levels are atomic. If the worker crashes, the index remains in its last val
 ### Continuous mode (default)
 
 ```bash
-searchdb compact my_index
+dsrch compact my_index
 ```
 
 The worker runs in a loop:
@@ -31,7 +31,7 @@ Stop with Ctrl+C (SIGINT) or SIGTERM. The worker finishes its current operation 
 ### One-shot mode
 
 ```bash
-searchdb compact my_index --once
+dsrch compact my_index --once
 ```
 
 Poll once, create segments if needed, merge if needed, then exit. Useful for cron jobs or CI pipelines.
@@ -39,7 +39,7 @@ Poll once, create segments if needed, merge if needed, then exit. Useful for cro
 ### Force merge
 
 ```bash
-searchdb compact my_index --force-merge
+dsrch compact my_index --force-merge
 ```
 
 Merge all segments into a single segment, then exit. Useful after a large bulk load or before taking a snapshot of the index.
@@ -72,7 +72,7 @@ All parameters are passed as CLI flags. There is no configuration file.
 ### Low-latency (near-real-time search)
 
 ```bash
-searchdb compact my_index \
+dsrch compact my_index \
   --segment-size 1000 \
   --poll-interval 2 \
   --merge-interval 1 \
@@ -84,7 +84,7 @@ New data becomes searchable within a few seconds. Higher merge frequency keeps s
 ### High-throughput (batch processing)
 
 ```bash
-searchdb compact my_index \
+dsrch compact my_index \
   --segment-size 100000 \
   --poll-interval 60 \
   --merge-interval 30 \
@@ -100,10 +100,10 @@ Larger segments reduce merge overhead. Longer poll interval reduces Delta table 
 # ...
 
 # Sync and compact in one step
-searchdb compact my_index --once
+dsrch compact my_index --once
 
 # Optionally optimize for read performance
-searchdb compact my_index --force-merge
+dsrch compact my_index --force-merge
 ```
 
 ## How segments work
@@ -113,7 +113,7 @@ When the compact worker creates a segment, it:
 1. Reads new rows from Delta (everything since the last watermark version)
 2. For each row: deletes any existing document with the same `_id` (upsert), then adds the new document
 3. Commits the segment to tantivy
-4. Updates the version watermark in `searchdb.json`
+4. Updates the version watermark in `searchdb.json` (legacy filename)
 
 Each commit produces a new segment file on disk. tantivy searches across all segments and merges results, so data is immediately searchable after commit.
 
@@ -127,10 +127,10 @@ Every write includes a delete-by-`_id` before the insert. This means:
 
 ## Monitoring
 
-Check the current state with `searchdb stats`:
+Check the current state with `dsrch stats`:
 
 ```bash
-searchdb stats my_index
+dsrch stats my_index
 ```
 
 This shows:
@@ -145,7 +145,7 @@ If the gap between index_version and Delta HEAD is growing, your compact worker 
 
 The compact worker requires:
 
-1. An index connected to a Delta source (`searchdb connect-delta` must have been run first)
+1. An index connected to a Delta source (`dsrch connect-delta` must have been run first)
 2. Credentials for the blob storage backend (S3, GCS, Azure) if your Delta table is on remote storage
 3. Exclusive write access -- only one compact worker can run per index at a time (enforced by tantivy's write lock)
 

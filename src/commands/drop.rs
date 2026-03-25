@@ -8,7 +8,7 @@ pub fn run(storage: &Storage, name: &str) -> Result<()> {
     }
 
     storage.drop(name)?;
-    eprintln!("[searchdb] Dropped '{name}'");
+    eprintln!("[dsrch] Dropped '{name}'");
     Ok(())
 }
 

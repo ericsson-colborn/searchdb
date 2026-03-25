@@ -63,7 +63,7 @@ pub fn run(
 
     print_results(&results, fmt)?;
 
-    eprintln!("[searchdb] {} result(s)", results.len());
+    eprintln!("[dsrch] {} result(s)", results.len());
     Ok(())
 }
 
@@ -90,7 +90,7 @@ fn print_results(results: &[searcher::SearchHit], fmt: OutputFormat) -> Result<(
         }
         OutputFormat::Text => {
             if results.is_empty() {
-                eprintln!("[searchdb] No results");
+                eprintln!("[dsrch] No results");
                 return Ok(());
             }
             let first = results[0].doc.as_object().unwrap();

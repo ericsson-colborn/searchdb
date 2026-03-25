@@ -87,7 +87,7 @@ impl<'a> CompactWorker<'a> {
 
         // Handle --force-merge: merge all segments and exit
         if self.opts.force_merge {
-            eprintln!("[searchdb] compact: force-merging all segments...");
+            eprintln!("[dsrch] compact: force-merging all segments...");
             self.force_merge_all(&index, &mut index_writer).await?;
         } else {
             let mut last_merge_check = Instant::now();
@@ -95,7 +95,7 @@ impl<'a> CompactWorker<'a> {
             // Main loop
             loop {
                 if *shutdown.borrow() {
-                    eprintln!("[searchdb] compact: shutdown signal received, finishing...");
+                    eprintln!("[dsrch] compact: shutdown signal received, finishing...");
                     break;
                 }
 
@@ -113,7 +113,7 @@ impl<'a> CompactWorker<'a> {
                 if !segmented {
                     let current_config = self.storage.load_config(&self.name)?;
                     let index_version = current_config.index_version.unwrap_or(-1);
-                    eprintln!("[searchdb] compact: up to date at Delta v{index_version}");
+                    eprintln!("[dsrch] compact: up to date at Delta v{index_version}");
                 }
 
                 // Level 2: Check for merge opportunity
@@ -137,7 +137,7 @@ impl<'a> CompactWorker<'a> {
 
         // Clean shutdown — consumes the writer
         index_writer.wait_merging_threads()?;
-        eprintln!("[searchdb] compact: shutdown complete");
+        eprintln!("[dsrch] compact: shutdown complete");
         Ok(())
     }
 
@@ -162,21 +162,21 @@ impl<'a> CompactWorker<'a> {
 
         let gap = current_version - index_version;
         eprintln!(
-            "[searchdb] compact: polling Delta... HEAD={current_version}, \
+            "[dsrch] compact: polling Delta... HEAD={current_version}, \
              index={index_version}, gap={gap} versions"
         );
 
         let rows = delta.rows_added_since(index_version).await?;
 
         if rows.is_empty() {
-            eprintln!("[searchdb] compact: no new rows to index");
+            eprintln!("[dsrch] compact: no new rows to index");
             current_config.index_version = Some(current_version);
             self.save_config_with_compact(&current_config)?;
             return Ok(false);
         }
 
         eprintln!(
-            "[searchdb] compact: read {} rows from Delta v{}..v{}",
+            "[dsrch] compact: read {} rows from Delta v{}..v{}",
             rows.len(),
             index_version,
             current_version
@@ -197,7 +197,7 @@ impl<'a> CompactWorker<'a> {
             index_writer.commit()?;
 
             eprintln!(
-                "[searchdb] compact: committed segment {}/{} ({} docs)",
+                "[dsrch] compact: committed segment {}/{} ({} docs)",
                 i + 1,
                 num_batches,
                 batch.len()
@@ -209,7 +209,7 @@ impl<'a> CompactWorker<'a> {
         self.save_compact_meta(&mut current_config, true, false)?;
         self.storage.save_config(&self.name, &current_config)?;
 
-        eprintln!("[searchdb] compact: now at Delta v{current_version}");
+        eprintln!("[dsrch] compact: now at Delta v{current_version}");
         Ok(true)
     }
 
@@ -222,7 +222,7 @@ impl<'a> CompactWorker<'a> {
         let segment_metas = self.read_segment_metas(index)?;
         let segment_count = segment_metas.len();
 
-        eprintln!("[searchdb] compact: merge check: {segment_count} segments");
+        eprintln!("[dsrch] compact: merge check: {segment_count} segments");
 
         if segment_count <= 1 {
             return Ok(());
@@ -232,7 +232,7 @@ impl<'a> CompactWorker<'a> {
         let merge_ops = policy.operations(&segment_metas);
 
         if merge_ops.is_empty() {
-            eprintln!("[searchdb] compact: no merge needed");
+            eprintln!("[dsrch] compact: no merge needed");
             return Ok(());
         }
 
@@ -244,7 +244,7 @@ impl<'a> CompactWorker<'a> {
             }
 
             eprintln!(
-                "[searchdb] compact: merge operation {}/{}: merging {} segments...",
+                "[dsrch] compact: merge operation {}/{}: merging {} segments...",
                 i + 1,
                 merge_ops.len(),
                 ids.len()
@@ -252,11 +252,11 @@ impl<'a> CompactWorker<'a> {
 
             match index_writer.merge(&ids).await {
                 Ok(_) => {
-                    eprintln!("[searchdb] compact: merged {} segments into 1", ids.len());
+                    eprintln!("[dsrch] compact: merged {} segments into 1", ids.len());
                     did_merge = true;
                 }
                 Err(e) => {
-                    eprintln!("[searchdb] compact: merge failed: {e}");
+                    eprintln!("[dsrch] compact: merge failed: {e}");
                 }
             }
         }
@@ -331,21 +331,21 @@ impl<'a> CompactWorker<'a> {
 
         if segment_ids.len() <= 1 {
             eprintln!(
-                "[searchdb] compact: already {} segment(s), nothing to merge",
+                "[dsrch] compact: already {} segment(s), nothing to merge",
                 segment_ids.len()
             );
             return Ok(());
         }
 
         eprintln!(
-            "[searchdb] compact: force-merging {} segments into 1...",
+            "[dsrch] compact: force-merging {} segments into 1...",
             segment_ids.len()
         );
 
         let merge_future = index_writer.merge(&segment_ids);
         match merge_future.await {
             Ok(_) => {
-                eprintln!("[searchdb] compact: force-merge complete");
+                eprintln!("[dsrch] compact: force-merge complete");
             }
             Err(e) => {
                 return Err(SearchDbError::Tantivy(e));
@@ -485,7 +485,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let delta_path = dir.path().join("delta_table");
         let delta_str = delta_path.to_str().unwrap();
-        let data_dir = dir.path().join("searchdb_data");
+        let data_dir = dir.path().join("dsrch_data");
         let data_str = data_dir.to_str().unwrap();
 
         create_delta_table(delta_str, &[("d1", "glucose", 100.0), ("d2", "a1c", 5.7)]).await;
@@ -544,7 +544,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let delta_path = dir.path().join("delta_table");
         let delta_str = delta_path.to_str().unwrap();
-        let data_dir = dir.path().join("searchdb_data");
+        let data_dir = dir.path().join("dsrch_data");
         let data_str = data_dir.to_str().unwrap();
 
         create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
@@ -601,7 +601,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let delta_path = dir.path().join("delta_table");
         let delta_str = delta_path.to_str().unwrap();
-        let data_dir = dir.path().join("searchdb_data");
+        let data_dir = dir.path().join("dsrch_data");
         let data_str = data_dir.to_str().unwrap();
 
         create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
@@ -649,7 +649,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let delta_path = dir.path().join("delta_table");
         let delta_str = delta_path.to_str().unwrap();
-        let data_dir = dir.path().join("searchdb_data");
+        let data_dir = dir.path().join("dsrch_data");
         let data_str = data_dir.to_str().unwrap();
 
         create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
@@ -690,7 +690,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let delta_path = dir.path().join("delta_table");
         let delta_str = delta_path.to_str().unwrap();
-        let data_dir = dir.path().join("searchdb_data");
+        let data_dir = dir.path().join("dsrch_data");
         let data_str = data_dir.to_str().unwrap();
 
         create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;

@@ -19,16 +19,16 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: searchdb-x86_64-linux
+            artifact: dsrch-x86_64-linux
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: searchdb-aarch64-linux
+            artifact: dsrch-aarch64-linux
           - target: x86_64-apple-darwin
             os: macos-latest
-            artifact: searchdb-x86_64-macos
+            artifact: dsrch-x86_64-macos
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact: searchdb-aarch64-macos
+            artifact: dsrch-aarch64-macos
 
     steps:
       - uses: actions/checkout@v4
@@ -52,7 +52,7 @@ jobs:
       - name: Package binary
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/searchdb dist/${{ matrix.artifact }}
+          cp target/${{ matrix.target }}/release/dsrch dist/${{ matrix.artifact }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

@@ -27,7 +27,7 @@ pub enum FieldType {
 }
 
 /// Schema declaration — maps field names to types.
-/// Serialized to searchdb.json alongside Delta metadata.
+/// Serialized to searchdb.json (legacy filename) alongside Delta metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Schema {
     pub fields: BTreeMap<String, FieldType>,

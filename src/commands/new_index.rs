@@ -7,7 +7,7 @@ use crate::storage::{IndexConfig, Storage};
 /// Create a new empty index, optionally from a schema declaration.
 ///
 /// If `schema_json` is None, creates an empty-schema index with `inferred: true`.
-/// Schema will be populated on first `searchdb index` via schema evolution.
+/// Schema will be populated on first `dsrch index` via schema evolution.
 ///
 /// If `infer_from` is provided, reads the NDJSON file and infers field types.
 /// If both `infer_from` and `schema_json` are provided, schema acts as override.
@@ -79,7 +79,7 @@ fn read_ndjson_file(path: &str) -> Result<Vec<serde_json::Value>> {
         }
         match serde_json::from_str(trimmed) {
             Ok(v) => docs.push(v),
-            Err(e) => eprintln!("[searchdb] Skipping invalid JSON during inference: {e}"),
+            Err(e) => eprintln!("[dsrch] Skipping invalid JSON during inference: {e}"),
         }
     }
     Ok(docs)
@@ -116,7 +116,7 @@ fn create_index(
     storage.save_config(name, &config)?;
 
     eprintln!(
-        "[searchdb] Created index '{name}' with {} field(s){}",
+        "[dsrch] Created index '{name}' with {} field(s){}",
         config.schema.fields.len(),
         if inferred {
             " (schema will be inferred from data)"

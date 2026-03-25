@@ -43,8 +43,8 @@ impl OutputFormat {
 
 #[derive(Parser)]
 #[command(
-    name = "searchdb",
-    about = "ES in your pocket — embedded search backed by tantivy + Delta Lake",
+    name = "dsrch",
+    about = "deltasearch — ES in your pocket. Embedded search backed by tantivy + Delta Lake.",
     version
 )]
 struct Cli {
@@ -52,7 +52,7 @@ struct Cli {
     command: Commands,
 
     /// Data directory for indexes
-    #[arg(long, global = true, default_value = ".searchdb")]
+    #[arg(long, global = true, default_value = ".dsrch")]
     data_dir: String,
 
     /// Output format: json or text (default: text in terminal, json when piped)
@@ -367,7 +367,7 @@ async fn read_gap(storage: &Storage, name: &str) -> (Vec<serde_json::Value>, i64
     let current_version = match delta_sync.current_version().await {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("[searchdb] Delta read warning: {e}");
+            eprintln!("[dsrch] Delta read warning: {e}");
             return (vec![], 0);
         }
     };
@@ -381,7 +381,7 @@ async fn read_gap(storage: &Storage, name: &str) -> (Vec<serde_json::Value>, i64
     let rows = match delta_sync.rows_added_since(index_version).await {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("[searchdb] Delta gap read warning: {e}");
+            eprintln!("[dsrch] Delta gap read warning: {e}");
             return (vec![], gap_versions);
         }
     };
@@ -482,7 +482,7 @@ fn handle_error(result: error::Result<()>, fmt: OutputFormat) {
                 eprintln!("{}", serde_json::to_string(&error_json).unwrap());
             }
             OutputFormat::Text => {
-                eprintln!("[searchdb] Error: {e}");
+                eprintln!("[dsrch] Error: {e}");
             }
         }
         std::process::exit(1);

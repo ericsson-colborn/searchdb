@@ -4,13 +4,13 @@ Get from zero to search in 5 minutes. This tutorial creates an index, loads samp
 
 ## Prerequisites
 
-- SearchDB binary installed (see [Installation](../../README.md#installation))
+- deltasearch binary installed (see [Installation](../../README.md#installation))
 - A terminal
 
 ## Step 1: Create an index with a schema
 
 ```bash
-searchdb new movies --schema '{
+dsrch new movies --schema '{
   "fields": {
     "title": "text",
     "genre": "keyword",
@@ -23,7 +23,7 @@ searchdb new movies --schema '{
 
 This creates an index called `movies` with five fields. The `text` type enables full-text search with stemming. The `keyword` type is for exact matching (filters, facets). The `numeric` type supports range queries.
 
-You can also skip the schema entirely and let SearchDB infer types from your data. See the [Schema guide](../guides/schema.md) for details.
+You can also skip the schema entirely and let deltasearch infer types from your data. See the [Schema guide](../guides/schema.md) for details.
 
 ## Step 2: Index some documents
 
@@ -42,13 +42,13 @@ EOF
 Index it:
 
 ```bash
-searchdb index movies -f movies.ndjson
+dsrch index movies -f movies.ndjson
 ```
 
 You can also pipe data directly:
 
 ```bash
-cat movies.ndjson | searchdb index movies
+cat movies.ndjson | dsrch index movies
 ```
 
 ## Step 3: Search
@@ -56,31 +56,31 @@ cat movies.ndjson | searchdb index movies
 **Full-text search** -- finds stemmed matches (e.g., "travel" matches "travels"):
 
 ```bash
-searchdb search movies -q "redemption"
+dsrch search movies -q "redemption"
 ```
 
 **Filter by keyword** -- exact match on the `genre` field:
 
 ```bash
-searchdb search movies -q '+genre:"sci-fi"'
+dsrch search movies -q '+genre:"sci-fi"'
 ```
 
 **Range query** -- movies from the 1990s:
 
 ```bash
-searchdb search movies -q '+year:[1990 TO 1999]'
+dsrch search movies -q '+year:[1990 TO 1999]'
 ```
 
 **Combine filters** -- sci-fi movies directed by Nolan:
 
 ```bash
-searchdb search movies -q '+genre:"sci-fi" +director:"Nolan"'
+dsrch search movies -q '+genre:"sci-fi" +director:"Nolan"'
 ```
 
 **Elasticsearch DSL** -- same query using the `--dsl` flag:
 
 ```bash
-searchdb search movies --dsl '{
+dsrch search movies --dsl '{
   "bool": {
     "must": [
       {"term": {"genre": "sci-fi"}},
@@ -95,13 +95,13 @@ searchdb search movies --dsl '{
 Fetch a single document by its `_id`:
 
 ```bash
-searchdb get movies 3
+dsrch get movies 3
 ```
 
 ## Step 5: Check stats
 
 ```bash
-searchdb stats movies
+dsrch stats movies
 ```
 
 This shows the document count, segment count, schema, and (if connected to Delta Lake) the sync status.

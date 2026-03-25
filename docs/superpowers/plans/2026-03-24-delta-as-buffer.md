@@ -4,7 +4,7 @@
 
 **Goal:** Eliminate IndexWriter lock contention by reading un-indexed Delta rows at query time and promoting them to the tantivy index via fire-and-forget background sync.
 
-**Architecture:** Two-tier search — persistent tantivy index (cold, covers data up to `index_version`) + ephemeral in-memory tantivy index built from Delta gap rows (hot, covers `index_version` to Delta HEAD). Background promotion via spawning `searchdb sync` as a detached child process.
+**Architecture:** Two-tier search — persistent tantivy index (cold, covers data up to `index_version`) + ephemeral in-memory tantivy index built from Delta gap rows (hot, covers `index_version` to Delta HEAD). Background promotion via spawning `dsrch sync` as a detached child process.
 
 **Tech Stack:** Rust, tantivy 0.25 (RamDirectory for ephemeral index), deltalake crate (async), tokio, clap 4
 
@@ -461,14 +461,14 @@ In `src/commands/sync.rs`, replace the direct `index.writer(50_000_000)?` call w
     let mut index_writer = match index.writer(50_000_000) {
         Ok(w) => w,
         Err(tantivy::TantivyError::LockFailure(_, _)) => {
-            eprintln!("[searchdb] Index locked by another process, skipping sync");
+            eprintln!("[dsrch] Index locked by another process, skipping sync");
             return Ok(());
         }
         Err(e) => return Err(SearchDbError::Tantivy(e)),
     };
 ```
 
-This makes `searchdb sync` safe to spawn as a fire-and-forget process — if the lock is held, it exits cleanly with code 0.
+This makes `dsrch sync` safe to spawn as a fire-and-forget process — if the lock is held, it exits cleanly with code 0.
 
 - [ ] **Step 2: Run tests**
 
@@ -517,7 +517,7 @@ async fn read_gap(storage: &Storage, name: &str) -> (Vec<serde_json::Value>, i64
     let current_version = match delta.current_version().await {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("[searchdb] Delta read warning: {e}");
+            eprintln!("[dsrch] Delta read warning: {e}");
             return (vec![], 0);
         }
     };
@@ -531,7 +531,7 @@ async fn read_gap(storage: &Storage, name: &str) -> (Vec<serde_json::Value>, i64
     let rows = match delta.rows_added_since(index_version).await {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("[searchdb] Delta gap read warning: {e}");
+            eprintln!("[dsrch] Delta gap read warning: {e}");
             return (vec![], gap_versions);
         }
     };
@@ -830,21 +830,21 @@ Expected: All pass, 0 warnings.
 - [ ] **Step 2: E2E smoke test**
 
 ```bash
-rm -rf /tmp/searchdb_e2e
-./target/debug/searchdb --data-dir /tmp/searchdb_e2e new labs \
+rm -rf /tmp/dsrch_e2e
+./target/debug/dsrch --data-dir /tmp/dsrch_e2e new labs \
   --schema '{"fields":{"name":"keyword","notes":"text"}}'
 
 echo '{"_id":"1","name":"glucose","notes":"fasting sample"}
 {"_id":"2","name":"a1c","notes":"borderline diabetic"}' \
-  | ./target/debug/searchdb --data-dir /tmp/searchdb_e2e index labs
+  | ./target/debug/dsrch --data-dir /tmp/dsrch_e2e index labs
 
-./target/debug/searchdb --data-dir /tmp/searchdb_e2e search labs -q 'diabetes' --output json
+./target/debug/dsrch --data-dir /tmp/dsrch_e2e search labs -q 'diabetes' --output json
 # Expected: doc 2 (stemmed match)
 
-./target/debug/searchdb --data-dir /tmp/searchdb_e2e get labs 1 --output json
+./target/debug/dsrch --data-dir /tmp/dsrch_e2e get labs 1 --output json
 # Expected: doc 1
 
-./target/debug/searchdb --data-dir /tmp/searchdb_e2e stats labs --output json
+./target/debug/dsrch --data-dir /tmp/dsrch_e2e stats labs --output json
 # Expected: num_docs: 2
 ```
 

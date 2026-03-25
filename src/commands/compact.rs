@@ -23,17 +23,17 @@ pub async fn run(storage: &Storage, name: &str, opts: CompactOptions) -> Result<
                     .expect("failed to install SIGTERM handler");
             tokio::select! {
                 _ = ctrl_c => {
-                    eprintln!("\n[searchdb] compact: received SIGINT, shutting down gracefully...");
+                    eprintln!("\n[dsrch] compact: received SIGINT, shutting down gracefully...");
                 }
                 _ = sigterm.recv() => {
-                    eprintln!("[searchdb] compact: received SIGTERM, shutting down gracefully...");
+                    eprintln!("[dsrch] compact: received SIGTERM, shutting down gracefully...");
                 }
             }
         }
         #[cfg(not(unix))]
         {
             ctrl_c.await.ok();
-            eprintln!("\n[searchdb] compact: received Ctrl+C, shutting down gracefully...");
+            eprintln!("\n[dsrch] compact: received Ctrl+C, shutting down gracefully...");
         }
         let _ = shutdown_tx.send(true);
     });

@@ -62,7 +62,7 @@ pub fn run(
                     );
                 }
                 OutputFormat::Text => {
-                    eprintln!("[searchdb] Document '{doc_id}' not found in '{name}'");
+                    eprintln!("[dsrch] Document '{doc_id}' not found in '{name}'");
                 }
             }
             std::process::exit(3);

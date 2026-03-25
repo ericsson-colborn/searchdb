@@ -60,7 +60,7 @@ fn rebuild_index(storage: &Storage, name: &str, new_schema: &Schema) -> Result<(
     index_writer.commit()?;
 
     eprintln!(
-        "[searchdb] Rebuilt index '{name}' with {} existing document(s)",
+        "[dsrch] Rebuilt index '{name}' with {} existing document(s)",
         existing_docs.len()
     );
     Ok(())
@@ -86,7 +86,7 @@ fn read_ndjson(file: Option<&str>) -> Result<Vec<serde_json::Value>> {
         }
         match serde_json::from_str(trimmed) {
             Ok(v) => docs.push(v),
-            Err(e) => eprintln!("[searchdb] Skipping invalid JSON: {e}"),
+            Err(e) => eprintln!("[dsrch] Skipping invalid JSON: {e}"),
         }
     }
     Ok(docs)
@@ -107,7 +107,7 @@ pub fn run(storage: &Storage, name: &str, file: Option<&str>) -> Result<()> {
     // Read all input documents
     let new_docs = read_ndjson(file)?;
     if new_docs.is_empty() {
-        eprintln!("[searchdb] No documents to index");
+        eprintln!("[dsrch] No documents to index");
         return Ok(());
     }
 
@@ -119,7 +119,7 @@ pub fn run(storage: &Storage, name: &str, file: Option<&str>) -> Result<()> {
 
         if !new_fields.is_empty() {
             eprintln!(
-                "[searchdb] Schema evolution: discovered {} new field(s): {}",
+                "[dsrch] Schema evolution: discovered {} new field(s): {}",
                 new_fields.len(),
                 new_fields.join(", ")
             );
@@ -146,7 +146,7 @@ pub fn run(storage: &Storage, name: &str, file: Option<&str>) -> Result<()> {
     }
     index_writer.commit()?;
 
-    eprintln!("[searchdb] Indexed {count} document(s) into '{name}'");
+    eprintln!("[dsrch] Indexed {count} document(s) into '{name}'");
     Ok(())
 }
 

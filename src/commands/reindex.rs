@@ -28,10 +28,10 @@ pub async fn run(storage: &Storage, name: &str, as_of_version: Option<i64>) -> R
         None => delta.current_version().await?,
     };
 
-    eprintln!("[searchdb] Reindexing '{name}' from Delta v{version}");
+    eprintln!("[dsrch] Reindexing '{name}' from Delta v{version}");
 
     let rows = delta.full_load(as_of_version).await?;
-    eprintln!("[searchdb] Loaded {} row(s) from Delta", rows.len());
+    eprintln!("[dsrch] Loaded {} row(s) from Delta", rows.len());
 
     // Destroy and recreate the tantivy index directory
     let tantivy_dir = storage.tantivy_dir(name);
@@ -60,6 +60,6 @@ pub async fn run(storage: &Storage, name: &str, as_of_version: Option<i64>) -> R
     config.index_version = Some(version);
     storage.save_config(name, &config)?;
 
-    eprintln!("[searchdb] Reindexed '{name}' with {count} document(s) at Delta v{version}");
+    eprintln!("[dsrch] Reindexed '{name}' with {count} document(s) at Delta v{version}");
     Ok(())
 }

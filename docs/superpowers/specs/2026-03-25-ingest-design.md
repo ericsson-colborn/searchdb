@@ -38,7 +38,7 @@ dsrch ingest  ->  Delta Lake  ->  dsrch connect-delta  ->  dsrch compact  ->  ds
 ## CLI Interface
 
 ```
-searchdb ingest [OPTIONS]
+dsrch ingest [OPTIONS]
 
 Options:
   --source <GLOB_OR_PATH>   Source file(s) — glob pattern or single path
@@ -64,7 +64,7 @@ When reading from stdin, `--format` is required (no extension to detect from).
 ### Stdin Support
 
 ```bash
-cat data.ndjson | searchdb ingest --delta /tmp/labs --format ndjson
+cat data.ndjson | dsrch ingest --delta /tmp/labs --format ndjson
 ```
 
 When `--source` is omitted and stdin is not a TTY, read from stdin. Buffer into Arrow RecordBatches using the specified `--format`, then write to Delta.
@@ -72,7 +72,7 @@ When `--source` is omitted and stdin is not a TTY, read from stdin. Buffer into 
 ### Glob Support
 
 ```bash
-searchdb ingest --source "./data/*.json" --delta /tmp/labs
+dsrch ingest --source "./data/*.json" --delta /tmp/labs
 ```
 
 Use the `glob` crate to expand patterns. Without it, shell expansion handles simple cases but quoted patterns (which we need for cross-platform support) don't expand.
