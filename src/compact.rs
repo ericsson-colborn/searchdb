@@ -6,6 +6,7 @@ use tantivy::Index;
 
 use crate::delta::DeltaSync;
 use crate::error::{Result, SearchDbError};
+use crate::merge_policy::{SegmentMeta, StableLogMergePolicy, StableLogMergePolicyConfig};
 use crate::storage::{CompactMeta, IndexConfig, Storage};
 use crate::writer;
 
@@ -212,59 +213,110 @@ impl<'a> CompactWorker<'a> {
         Ok(true)
     }
 
-    /// Level 2: Check segment count and merge if above threshold.
+    /// Level 2: Use StableLogMergePolicy to decide which segments to merge.
     async fn maybe_merge(
         &self,
         index: &Index,
         index_writer: &mut tantivy::IndexWriter,
     ) -> Result<()> {
-        let segment_ids: Vec<SegmentId> = index
-            .searchable_segment_ids()
-            .map_err(SearchDbError::Tantivy)?;
+        let segment_metas = self.read_segment_metas(index)?;
+        let segment_count = segment_metas.len();
 
-        let segment_count = segment_ids.len();
+        eprintln!("[searchdb] compact: merge check: {segment_count} segments");
 
-        eprintln!(
-            "[searchdb] compact: merge check: {segment_count} segments, \
-             threshold={}",
-            self.opts.max_segments
-        );
-
-        if segment_count <= self.opts.max_segments {
+        if segment_count <= 1 {
             return Ok(());
         }
 
-        if segment_ids.len() <= 1 {
+        let policy = self.build_merge_policy();
+        let merge_ops = policy.operations(&segment_metas);
+
+        if merge_ops.is_empty() {
+            eprintln!("[searchdb] compact: no merge needed");
             return Ok(());
         }
 
-        eprintln!(
-            "[searchdb] compact: merging {} segments...",
-            segment_ids.len()
-        );
-
-        let merge_future = index_writer.merge(&segment_ids);
-        match merge_future.await {
-            Ok(_meta) => {
-                eprintln!(
-                    "[searchdb] compact: merged {} segments into 1",
-                    segment_ids.len()
-                );
+        let mut did_merge = false;
+        for (i, group) in merge_ops.iter().enumerate() {
+            let ids = self.resolve_segment_ids(index, group)?;
+            if ids.len() <= 1 {
+                continue;
             }
-            Err(e) => {
-                eprintln!("[searchdb] compact: merge failed: {e}");
+
+            eprintln!(
+                "[searchdb] compact: merge operation {}/{}: merging {} segments...",
+                i + 1,
+                merge_ops.len(),
+                ids.len()
+            );
+
+            match index_writer.merge(&ids).await {
+                Ok(_) => {
+                    eprintln!("[searchdb] compact: merged {} segments into 1", ids.len());
+                    did_merge = true;
+                }
+                Err(e) => {
+                    eprintln!("[searchdb] compact: merge failed: {e}");
+                }
             }
         }
 
-        // Garbage collect old segment files
-        let _ = index_writer.garbage_collect_files().await;
+        if did_merge {
+            // Garbage collect old segment files
+            let _ = index_writer.garbage_collect_files().await;
 
-        // Update compaction metadata
-        let mut config = self.storage.load_config(&self.name)?;
-        self.save_compact_meta(&mut config, false, true)?;
-        self.storage.save_config(&self.name, &config)?;
+            // Update compaction metadata
+            let mut config = self.storage.load_config(&self.name)?;
+            self.save_compact_meta(&mut config, false, true)?;
+            self.storage.save_config(&self.name, &config)?;
+        }
 
         Ok(())
+    }
+
+    /// Build a StableLogMergePolicy from CompactOptions.
+    fn build_merge_policy(&self) -> StableLogMergePolicy {
+        let config = StableLogMergePolicyConfig {
+            // Use max_segments as the merge factor: trigger merge when
+            // a level accumulates this many segments.
+            merge_factor: self.opts.max_segments,
+            max_merge_factor: self.opts.max_segments + 2,
+            ..StableLogMergePolicyConfig::default()
+        };
+        StableLogMergePolicy::new(config)
+    }
+
+    /// Read segment metadata from the tantivy index into our policy-friendly type.
+    fn read_segment_metas(&self, index: &Index) -> Result<Vec<SegmentMeta>> {
+        let reader_metas = index
+            .searchable_segment_metas()
+            .map_err(SearchDbError::Tantivy)?;
+        let metas = reader_metas
+            .iter()
+            .map(|meta| SegmentMeta {
+                segment_id: meta.id().uuid_string(),
+                num_docs: meta.num_docs() as usize,
+                num_merge_ops: 0,
+            })
+            .collect();
+        Ok(metas)
+    }
+
+    /// Resolve our SegmentMeta segment_ids back to tantivy SegmentIds.
+    fn resolve_segment_ids(&self, index: &Index, group: &[SegmentMeta]) -> Result<Vec<SegmentId>> {
+        let all_metas = index
+            .searchable_segment_metas()
+            .map_err(SearchDbError::Tantivy)?;
+
+        let target_ids: std::collections::HashSet<&str> =
+            group.iter().map(|s| s.segment_id.as_str()).collect();
+
+        let ids: Vec<SegmentId> = all_metas
+            .iter()
+            .filter(|meta| target_ids.contains(meta.id().uuid_string().as_str()))
+            .map(|meta| meta.id())
+            .collect();
+        Ok(ids)
     }
 
     /// Force-merge all segments into one, then exit.

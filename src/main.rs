@@ -5,6 +5,7 @@ mod compact;
 mod delta;
 mod error;
 mod es_dsl;
+mod merge_policy;
 mod schema;
 mod searcher;
 mod storage;
