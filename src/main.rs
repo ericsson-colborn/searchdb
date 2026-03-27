@@ -262,8 +262,8 @@ async fn run_cli() {
             fields,
             score,
         } => {
-            let (gap_rows, gap_versions) = read_gap(&storage, &name).await;
-            let result = commands::search::run(
+            let (gap_rows, _) = read_gap(&storage, &name).await;
+            commands::search::run(
                 &storage,
                 &name,
                 query.as_deref(),
@@ -274,19 +274,15 @@ async fn run_cli() {
                 score,
                 fmt,
                 &gap_rows,
-            );
-            maybe_spawn_sync(&cli.data_dir, &name, gap_versions);
-            result
+            )
         }
         Commands::Get {
             name,
             doc_id,
             fields,
         } => {
-            let (gap_rows, gap_versions) = read_gap(&storage, &name).await;
-            let result = commands::get::run(&storage, &name, &doc_id, fields, fmt, &gap_rows);
-            maybe_spawn_sync(&cli.data_dir, &name, gap_versions);
-            result
+            let (gap_rows, _) = read_gap(&storage, &name).await;
+            commands::get::run(&storage, &name, &doc_id, fields, fmt, &gap_rows)
         }
         Commands::Stats { name } => {
             let gap_info = read_gap_info(&storage, &name).await;
@@ -387,25 +383,6 @@ async fn read_gap(storage: &Storage, name: &str) -> (Vec<serde_json::Value>, i64
         }
     };
     (rows, gap_versions)
-}
-
-/// Fire-and-forget background sync if gap exceeds threshold.
-#[cfg(feature = "delta")]
-fn maybe_spawn_sync(data_dir: &str, name: &str, gap_versions: i64) {
-    const GAP_THRESHOLD: i64 = 10;
-    if gap_versions <= GAP_THRESHOLD {
-        return;
-    }
-    let exe = match std::env::current_exe() {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    let _ = std::process::Command::new(exe)
-        .args(["sync", name, "--data-dir", data_dir])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
 }
 
 /// Read Delta version info for stats display.
