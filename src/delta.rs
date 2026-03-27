@@ -11,6 +11,7 @@ use crate::error::{Result, SearchDbError};
 /// - `added_rows`: rows from newly added Parquet files (to upsert)
 /// - `removed_ids`: `_id` values from removed Parquet files (to delete)
 #[derive(Debug, Default)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub struct DeltaChanges {
     pub added_rows: Vec<serde_json::Value>,
     pub removed_ids: Vec<String>,
@@ -127,6 +128,7 @@ impl DeltaSync {
     /// fallback for that edge case.
     ///
     /// If last_version < 0 (never synced), treats all rows as added.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn changes_since(&self, last_version: i64) -> Result<DeltaChanges> {
         if last_version < 0 {
             let rows = self.full_load(None).await?;
@@ -184,7 +186,6 @@ impl DeltaSync {
 
     /// Like `changes_since`, but streams added rows through a channel instead of
     /// materializing them all in memory. Returns removed_ids immediately.
-    #[allow(dead_code)]
     pub async fn changes_since_streaming(
         &self,
         last_version: i64,
@@ -327,7 +328,6 @@ fn extract_ids_from_parquet_files(uris: &[impl AsRef<str>]) -> Vec<String> {
 
 /// Read Parquet files and send each row as a JSON Value through the channel.
 /// Uses `arrow::json::ArrayWriter` (same as `read_parquet_files_to_json`).
-#[allow(dead_code)]
 fn stream_parquet_files_to_channel(
     uris: &[impl AsRef<str>],
     tx: crossbeam_channel::Sender<serde_json::Value>,

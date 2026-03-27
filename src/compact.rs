@@ -167,65 +167,72 @@ impl<'a> CompactWorker<'a> {
              index={index_version}, gap={gap} versions"
         );
 
-        let changes = delta.changes_since(index_version).await?;
+        // Create channel for streaming rows from Delta
+        let (row_tx, row_rx) = crossbeam_channel::bounded(100);
 
-        if changes.added_rows.is_empty() && changes.removed_ids.is_empty() {
-            eprintln!("[dsrch] compact: no changes to process");
-            current_config.index_version = Some(current_version);
-            self.save_config_with_compact(&current_config)?;
-            return Ok(false);
-        }
+        // Get removed IDs and stream added rows into channel
+        let removed_ids = delta
+            .changes_since_streaming(index_version, row_tx)
+            .await?;
 
         // Process deletions first (before upserts, so re-added rows win)
-        if !changes.removed_ids.is_empty() {
-            let del_count = writer::delete_documents(index_writer, id_field, &changes.removed_ids);
+        if !removed_ids.is_empty() {
+            let del_count = writer::delete_documents(index_writer, id_field, &removed_ids);
             index_writer.commit()?;
             eprintln!("[dsrch] compact: deleted {del_count} document(s) from removed Delta files");
         }
 
-        // Process added rows via parallel pipeline
-        let rows = changes.added_rows;
-        if !rows.is_empty() {
-            eprintln!(
-                "[dsrch] compact: read {} rows from Delta v{}..v{}",
-                rows.len(),
-                index_version,
-                current_version
-            );
+        // Stream rows through pipeline — commit per segment_size batch
+        let pipeline_config = PipelineConfig::default();
+        let segment_size = self.opts.segment_size;
+        let mut total_docs = 0u64;
+        let mut batch_num = 0usize;
 
-            let pipeline_config = PipelineConfig::default();
-
-            // Split into batches of segment_size, commit after each
-            let batches: Vec<Vec<serde_json::Value>> = rows
-                .chunks(self.opts.segment_size)
-                .map(|c| c.to_vec())
-                .collect();
-            let num_batches = batches.len();
-
-            for (i, batch) in batches.into_iter().enumerate() {
+        let mut batch = Vec::with_capacity(segment_size);
+        for row in row_rx {
+            batch.push(row);
+            if batch.len() >= segment_size {
+                batch_num += 1;
                 let batch_len = batch.len();
                 let stats = pipeline::run_pipeline(
-                    batch.into_iter(),
+                    std::mem::take(&mut batch).into_iter(),
                     tantivy_schema,
                     &initial_config.schema,
                     index_writer,
                     pipeline_config.clone(),
                 )?;
-
                 index_writer.commit()?;
-
-                if stats.errors > 0 {
-                    eprintln!(
-                        "[dsrch] compact: segment {}/{} — {} docs, {} errors",
-                        i + 1, num_batches, batch_len, stats.errors
-                    );
-                } else {
-                    eprintln!(
-                        "[dsrch] compact: committed segment {}/{} ({} docs)",
-                        i + 1, num_batches, batch_len
-                    );
-                }
+                total_docs += stats.docs_indexed;
+                eprintln!(
+                    "[dsrch] compact: committed segment {batch_num} ({batch_len} docs)"
+                );
+                batch = Vec::with_capacity(segment_size);
             }
+        }
+
+        // Final partial batch
+        if !batch.is_empty() {
+            batch_num += 1;
+            let batch_len = batch.len();
+            let stats = pipeline::run_pipeline(
+                batch.into_iter(),
+                tantivy_schema,
+                &initial_config.schema,
+                index_writer,
+                pipeline_config.clone(),
+            )?;
+            index_writer.commit()?;
+            total_docs += stats.docs_indexed;
+            eprintln!(
+                "[dsrch] compact: committed segment {batch_num} ({batch_len} docs)"
+            );
+        }
+
+        if total_docs == 0 && removed_ids.is_empty() {
+            eprintln!("[dsrch] compact: no changes to process");
+            current_config.index_version = Some(current_version);
+            self.save_config_with_compact(&current_config)?;
+            return Ok(false);
         }
 
         // Update watermark AFTER all segments committed (crash safety)
@@ -233,8 +240,10 @@ impl<'a> CompactWorker<'a> {
         self.save_compact_meta(&mut current_config, true, false)?;
         self.storage.save_config(&self.name, &current_config)?;
 
-        eprintln!("[dsrch] compact: now at Delta v{current_version}");
-        Ok(true)
+        eprintln!(
+            "[dsrch] compact: indexed {total_docs} docs in {batch_num} segment(s), now at Delta v{current_version}"
+        );
+        Ok(total_docs > 0 || !removed_ids.is_empty())
     }
 
     /// Level 2: Use StableLogMergePolicy to decide which segments to merge.
