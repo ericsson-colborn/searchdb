@@ -74,7 +74,9 @@ fn read_from_stdin(format_override: Option<&str>, batch_size: usize) -> Result<V
     })?;
     let format = ingest::parse_format(format_str)?;
 
-    if atty::is(atty::Stream::Stdin) {
+    use std::io::IsTerminal;
+
+    if std::io::stdin().is_terminal() {
         return Err(SearchDbError::Schema(
             "No source specified. Use --source or pipe data to stdin.".into(),
         ));

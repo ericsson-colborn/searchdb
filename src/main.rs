@@ -29,10 +29,12 @@ pub enum OutputFormat {
 impl OutputFormat {
     /// Resolve the output format: use explicit choice or auto-detect from TTY.
     fn resolve(explicit: Option<OutputFormat>) -> OutputFormat {
+        use std::io::IsTerminal;
+
         match explicit {
             Some(f) => f,
             None => {
-                if atty::is(atty::Stream::Stdout) {
+                if std::io::stdout().is_terminal() {
                     OutputFormat::Text
                 } else {
                     OutputFormat::Json

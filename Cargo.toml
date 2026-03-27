@@ -53,8 +53,6 @@ thiserror = "2"
 # Time
 chrono = "0.4"
 
-# TTY detection for output format
-atty = "0.2"
 
 # UUID generation for doc IDs
 uuid = { version = "1", features = ["v4"] }
