@@ -167,6 +167,8 @@ These ES features we do **not** plan to implement. They're either architecturall
 - Graceful shutdown on SIGINT/SIGTERM
 - Single-writer lock per index (only one compact worker at a time)
 - Crash-safe: watermark updated only after segment commit, can be picked up seamlessly by the next worker. 0 index corruption, 100% correct search results during crash and recovery.
+- CDF-based sync: when Delta table has Change Data Feed enabled, use row-level change tracking instead of file-level diffing. Enables merge semantics — partial updates merge into existing documents instead of replacing them. (#41)
+- `--merge-mode partial|full` flag (default: partial). Partial = incoming fields merge into existing doc. Full = incoming row replaces entire doc.
 
 ### Schema
 

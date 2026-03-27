@@ -23,7 +23,7 @@ serde_json = "1"
 serde_with = "3"
 
 # Delta Lake
-deltalake = { version = "0.25", features = ["datafusion"], optional = true }
+deltalake = { version = "0.25", features = ["datafusion", "azure", "s3", "gcs"], optional = true }
 
 # Arrow / Parquet (for reading Delta files)
 arrow = { version = "54", optional = true }
