@@ -7,9 +7,22 @@ use tantivy::schema::{DateOptions, NumericOptions, SchemaBuilder, TextFieldIndex
 static ISO_DATETIME_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}").unwrap());
 
-/// Returns true if the string looks like an ISO 8601 datetime (YYYY-MM-DDThh:mm:ss...).
+static YYYYMMDD_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d{8}$").unwrap());
+
+/// Validate that an 8-digit string is a plausible date (month 01-12, day 01-31).
+fn is_valid_yyyymmdd(s: &str) -> bool {
+    if !YYYYMMDD_RE.is_match(s) {
+        return false;
+    }
+    let month: u32 = s[4..6].parse().unwrap_or(0);
+    let day: u32 = s[6..8].parse().unwrap_or(0);
+    (1..=12).contains(&month) && (1..=31).contains(&day)
+}
+
+/// Returns true if the string looks like an ISO 8601 datetime (YYYY-MM-DDThh:mm:ss...)
+/// or a compact YYYYMMDD date.
 pub fn looks_like_date(s: &str) -> bool {
-    ISO_DATETIME_RE.is_match(s)
+    ISO_DATETIME_RE.is_match(s) || is_valid_yyyymmdd(s)
 }
 
 /// SearchDB field types — maps to ES-like concepts.
@@ -656,6 +669,24 @@ mod tests {
     fn test_schema_invalid_json() {
         let result = Schema::from_json("not json");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_looks_like_date_yyyymmdd() {
+        assert!(looks_like_date("20260315"));
+        assert!(looks_like_date("20001231"));
+        assert!(!looks_like_date("99999999")); // invalid month (99)
+        assert!(!looks_like_date("20261301")); // month 13
+        assert!(!looks_like_date("20260132")); // day 32
+        assert!(!looks_like_date("2026031")); // too short
+        assert!(!looks_like_date("202603155")); // too long
+        assert!(!looks_like_date("12345678")); // month=56, invalid
+    }
+
+    #[test]
+    fn test_infer_yyyymmdd_as_date() {
+        let ft = infer_field_type(&serde_json::json!("20260315"));
+        assert_eq!(ft, Some(FieldType::Date));
     }
 
     #[test]

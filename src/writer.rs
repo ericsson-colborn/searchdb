@@ -165,9 +165,24 @@ pub fn delete_documents(writer: &IndexWriter, id_field: Field, ids: &[String]) -
     count
 }
 
-/// Parse an ISO 8601 date string into a tantivy DateTime.
+/// Parse a date string into a tantivy DateTime.
+///
+/// Supports ISO 8601 (YYYY-MM-DDThh:mm:ss...) and compact YYYYMMDD format.
 fn parse_date(s: &str) -> Result<TantivyDateTime> {
-    // Normalize "Z" suffix to "+00:00" for chrono parsing
+    // YYYYMMDD compact format
+    if s.len() == 8 && s.chars().all(|c| c.is_ascii_digit()) {
+        let naive = chrono::NaiveDate::parse_from_str(s, "%Y%m%d")
+            .map_err(|e| SearchDbError::Schema(format!("invalid YYYYMMDD date '{s}': {e}")))?;
+        let dt = naive
+            .and_hms_opt(0, 0, 0)
+            .ok_or_else(|| SearchDbError::Schema(format!("invalid date '{s}'")))?
+            .and_utc();
+        return Ok(TantivyDateTime::from_timestamp_micros(
+            dt.timestamp_micros(),
+        ));
+    }
+
+    // ISO 8601 — normalize "Z" suffix to "+00:00" for chrono parsing
     let normalized = s.replace('Z', "+00:00");
     let dt = chrono::DateTime::parse_from_rfc3339(&normalized)
         .map_err(|e| SearchDbError::Schema(format!("invalid date '{s}': {e}")))?;
@@ -394,6 +409,47 @@ mod tests {
         let field = tv_schema.get_field("dates").unwrap();
         let values: Vec<_> = doc.get_all(field).collect();
         assert_eq!(values.len(), 2);
+    }
+
+    #[test]
+    fn test_build_document_yyyymmdd_date() {
+        let schema = Schema {
+            fields: BTreeMap::from([("born".into(), FieldType::Date)]),
+        };
+        let tv_schema = schema.build_tantivy_schema();
+
+        let dir = tempfile::tempdir().unwrap();
+        let index = tantivy::Index::create_in_dir(dir.path(), tv_schema.clone()).unwrap();
+        let mut writer = index.writer(50_000_000).unwrap();
+        let id_field = tv_schema.get_field("_id").unwrap();
+
+        let doc_json = serde_json::json!({"_id": "d1", "born": "20260315"});
+        let doc = build_document(&tv_schema, &schema, &doc_json, "d1").unwrap();
+        upsert_document(&writer, id_field, doc, "d1");
+        writer.commit().unwrap();
+
+        let reader = index.reader().unwrap();
+        let searcher = reader.searcher();
+        assert_eq!(searcher.num_docs(), 1);
+
+        // Verify the date was indexed (stored in _source)
+        let source_field = tv_schema.get_field("_source").unwrap();
+        let collected = searcher
+            .search(
+                &tantivy::query::AllQuery,
+                &tantivy::collector::TopDocs::with_limit(10),
+            )
+            .unwrap();
+        assert_eq!(collected.len(), 1);
+        let tdoc: TantivyDocument = searcher.doc(collected[0].1).unwrap();
+        let source = tdoc.get_first(source_field).unwrap().as_str().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(source).unwrap();
+        assert_eq!(parsed["born"], "20260315");
+
+        // Verify the date field was actually populated
+        let born_field = tv_schema.get_field("born").unwrap();
+        let date_values: Vec<_> = tdoc.get_all(born_field).collect();
+        assert_eq!(date_values.len(), 1);
     }
 
     #[test]
