@@ -117,6 +117,9 @@ enum Commands {
         /// Sort by field (e.g., "views", "views:asc", "published:desc"). Default order: desc.
         #[arg(long)]
         sort: Option<String>,
+        /// Aggregation request JSON (ES-compatible, e.g. '{"by_status": {"terms": {"field": "status"}}}')
+        #[arg(long)]
+        agg: Option<String>,
     },
 
     /// Get a single document by _id
@@ -251,6 +254,7 @@ async fn run_cli() {
             fields,
             score,
             sort,
+            agg,
         } => {
             let (gap_rows, _) = read_gap(&storage, &name).await;
             commands::search::run(
@@ -265,6 +269,7 @@ async fn run_cli() {
                 fmt,
                 &gap_rows,
                 sort.as_deref(),
+                agg.as_deref(),
             )
         }
         Commands::Get {
@@ -413,6 +418,7 @@ fn run_cli_sync() {
             fields,
             score,
             sort,
+            agg,
         } => commands::search::run(
             &storage,
             &name,
@@ -425,6 +431,7 @@ fn run_cli_sync() {
             fmt,
             &[],
             sort.as_deref(),
+            agg.as_deref(),
         ),
         Commands::Get {
             name,

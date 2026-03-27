@@ -524,6 +524,34 @@ fn doc_to_hit(
     Ok(SearchHit { doc: parsed, score })
 }
 
+/// Execute aggregations on search results.
+///
+/// Parses ES-compatible aggregation JSON, runs it via tantivy's built-in
+/// `AggregationCollector`, and returns ES-compatible aggregation results.
+/// Fields used in aggregations must have the FAST attribute enabled.
+pub fn aggregate(
+    index: &Index,
+    query: &dyn tantivy::query::Query,
+    agg_json: &str,
+) -> Result<serde_json::Value> {
+    use tantivy::aggregation::agg_req::Aggregations;
+    use tantivy::aggregation::AggregationCollector;
+
+    let agg_req: Aggregations = serde_json::from_str(agg_json)
+        .map_err(|e| SearchDbError::Schema(format!("aggregation parse error: {e}")))?;
+
+    let collector = AggregationCollector::from_aggs(agg_req, Default::default());
+
+    let reader = index
+        .reader()
+        .map_err(|e| SearchDbError::Schema(format!("failed to open reader: {e}")))?;
+    let searcher = reader.searcher();
+
+    let agg_results = searcher.search(query, &collector)?;
+
+    serde_json::to_value(agg_results).map_err(SearchDbError::Json)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1354,5 +1382,170 @@ mod tests {
         for hit in &results {
             assert_eq!(hit.score, 0.0);
         }
+    }
+
+    // --- Aggregation tests ---
+
+    fn setup_agg_test_index(dir: &std::path::Path) -> (Index, Schema) {
+        let schema = Schema {
+            fields: BTreeMap::from([
+                ("category".into(), FieldType::Keyword),
+                ("price".into(), FieldType::Numeric),
+            ]),
+        };
+        let tv_schema = schema.build_tantivy_schema();
+        let index = Index::create_in_dir(dir, tv_schema.clone()).unwrap();
+        let mut w = index.writer(15_000_000).unwrap();
+        let id_field = tv_schema.get_field("_id").unwrap();
+
+        let docs = vec![
+            serde_json::json!({"_id": "1", "category": "electronics", "price": 100.0}),
+            serde_json::json!({"_id": "2", "category": "electronics", "price": 200.0}),
+            serde_json::json!({"_id": "3", "category": "books", "price": 15.0}),
+            serde_json::json!({"_id": "4", "category": "books", "price": 25.0}),
+            serde_json::json!({"_id": "5", "category": "clothing", "price": 50.0}),
+        ];
+
+        for doc_json in &docs {
+            let doc_id = writer::make_doc_id(doc_json);
+            let doc = writer::build_document(&tv_schema, &schema, doc_json, &doc_id).unwrap();
+            writer::upsert_document(&w, id_field, doc, &doc_id);
+        }
+        w.commit().unwrap();
+
+        (index, schema)
+    }
+
+    #[test]
+    fn test_aggregate_terms() {
+        let dir = tempfile::tempdir().unwrap();
+        let (index, _schema) = setup_agg_test_index(dir.path());
+
+        let agg_json = r#"{"categories": {"terms": {"field": "category"}}}"#;
+        let result = aggregate(&index, &tantivy::query::AllQuery, agg_json).unwrap();
+
+        let buckets = result["categories"]["buckets"].as_array().unwrap();
+        assert_eq!(buckets.len(), 3);
+
+        // Check that all categories are present
+        let keys: Vec<&str> = buckets.iter().map(|b| b["key"].as_str().unwrap()).collect();
+        assert!(keys.contains(&"electronics"));
+        assert!(keys.contains(&"books"));
+        assert!(keys.contains(&"clothing"));
+
+        // Check counts
+        let electronics = buckets.iter().find(|b| b["key"] == "electronics").unwrap();
+        assert_eq!(electronics["doc_count"], 2);
+        let clothing = buckets.iter().find(|b| b["key"] == "clothing").unwrap();
+        assert_eq!(clothing["doc_count"], 1);
+    }
+
+    #[test]
+    fn test_aggregate_avg() {
+        let dir = tempfile::tempdir().unwrap();
+        let (index, _schema) = setup_agg_test_index(dir.path());
+
+        let agg_json = r#"{"avg_price": {"avg": {"field": "price"}}}"#;
+        let result = aggregate(&index, &tantivy::query::AllQuery, agg_json).unwrap();
+
+        // Average of 100, 200, 15, 25, 50 = 78.0
+        let avg = result["avg_price"]["value"].as_f64().unwrap();
+        assert!((avg - 78.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_aggregate_stats() {
+        let dir = tempfile::tempdir().unwrap();
+        let (index, _schema) = setup_agg_test_index(dir.path());
+
+        let agg_json = r#"{"price_stats": {"stats": {"field": "price"}}}"#;
+        let result = aggregate(&index, &tantivy::query::AllQuery, agg_json).unwrap();
+
+        assert_eq!(result["price_stats"]["count"].as_f64().unwrap() as u64, 5);
+        assert!((result["price_stats"]["min"].as_f64().unwrap() - 15.0).abs() < 0.01);
+        assert!((result["price_stats"]["max"].as_f64().unwrap() - 200.0).abs() < 0.01);
+        assert!((result["price_stats"]["sum"].as_f64().unwrap() - 390.0).abs() < 0.01);
+        assert!((result["price_stats"]["avg"].as_f64().unwrap() - 78.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_aggregate_histogram() {
+        let dir = tempfile::tempdir().unwrap();
+        let (index, _schema) = setup_agg_test_index(dir.path());
+
+        let agg_json = r#"{"price_ranges": {"histogram": {"field": "price", "interval": 100}}}"#;
+        let result = aggregate(&index, &tantivy::query::AllQuery, agg_json).unwrap();
+
+        let buckets = result["price_ranges"]["buckets"].as_array().unwrap();
+        assert!(!buckets.is_empty());
+    }
+
+    #[test]
+    fn test_aggregate_with_query_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let (index, _schema) = setup_agg_test_index(dir.path());
+
+        // Only aggregate over electronics
+        let category_field = index.schema().get_field("category").unwrap();
+        let term = tantivy::Term::from_field_text(category_field, "electronics");
+        let query = tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
+
+        let agg_json = r#"{"avg_price": {"avg": {"field": "price"}}}"#;
+        let result = aggregate(&index, &query, agg_json).unwrap();
+
+        // Average of 100, 200 = 150.0
+        let avg = result["avg_price"]["value"].as_f64().unwrap();
+        assert!((avg - 150.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_aggregate_invalid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let (index, _schema) = setup_agg_test_index(dir.path());
+
+        let result = aggregate(&index, &tantivy::query::AllQuery, "not json");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("aggregation parse error"));
+    }
+
+    #[test]
+    fn test_aggregate_min_max() {
+        let dir = tempfile::tempdir().unwrap();
+        let (index, _schema) = setup_agg_test_index(dir.path());
+
+        let agg_json = r#"{
+            "min_price": {"min": {"field": "price"}},
+            "max_price": {"max": {"field": "price"}}
+        }"#;
+        let result = aggregate(&index, &tantivy::query::AllQuery, agg_json).unwrap();
+
+        assert!((result["min_price"]["value"].as_f64().unwrap() - 15.0).abs() < 0.01);
+        assert!((result["max_price"]["value"].as_f64().unwrap() - 200.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_aggregate_terms_with_sub_aggregation() {
+        let dir = tempfile::tempdir().unwrap();
+        let (index, _schema) = setup_agg_test_index(dir.path());
+
+        let agg_json = r#"{
+            "by_category": {
+                "terms": {"field": "category"},
+                "aggs": {
+                    "avg_price": {"avg": {"field": "price"}}
+                }
+            }
+        }"#;
+        let result = aggregate(&index, &tantivy::query::AllQuery, agg_json).unwrap();
+
+        let buckets = result["by_category"]["buckets"].as_array().unwrap();
+        let electronics = buckets.iter().find(|b| b["key"] == "electronics").unwrap();
+        let avg = electronics["avg_price"]["value"].as_f64().unwrap();
+        assert!((avg - 150.0).abs() < 0.01);
+
+        let books = buckets.iter().find(|b| b["key"] == "books").unwrap();
+        let avg = books["avg_price"]["value"].as_f64().unwrap();
+        assert!((avg - 20.0).abs() < 0.01);
     }
 }

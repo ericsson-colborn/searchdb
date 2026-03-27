@@ -94,11 +94,14 @@ impl Schema {
         for (name, field_type) in &self.fields {
             match field_type {
                 FieldType::Keyword => {
-                    let opts = TextOptions::default().set_stored().set_indexing_options(
-                        TextFieldIndexing::default()
-                            .set_tokenizer("raw")
-                            .set_index_option(tantivy::schema::IndexRecordOption::Basic),
-                    );
+                    let opts = TextOptions::default()
+                        .set_stored()
+                        .set_fast(Some("raw"))
+                        .set_indexing_options(
+                            TextFieldIndexing::default()
+                                .set_tokenizer("raw")
+                                .set_index_option(tantivy::schema::IndexRecordOption::Basic),
+                        );
                     builder.add_text_field(name, opts);
                 }
                 FieldType::Text => {
