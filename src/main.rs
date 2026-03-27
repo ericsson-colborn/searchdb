@@ -8,6 +8,7 @@ mod es_dsl;
 #[cfg(feature = "delta")]
 mod ingest;
 mod merge_policy;
+mod pipeline;
 mod schema;
 mod searcher;
 mod storage;

@@ -1584,6 +1584,7 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "crossbeam-channel",
  "deltalake",
  "env_logger",
  "glob",

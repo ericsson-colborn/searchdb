@@ -60,6 +60,9 @@ atty = "0.2"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
 
+# Bounded channels for parallel pipeline
+crossbeam-channel = "0.5"
+
 [features]
 default = ["delta"]
 delta = ["dep:deltalake", "dep:arrow", "dep:parquet", "dep:tokio", "dep:glob", "dep:arrow-csv", "dep:arrow-json"]
