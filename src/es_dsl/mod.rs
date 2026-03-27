@@ -8,10 +8,13 @@ mod bool_query;
 mod exists_query;
 mod match_phrase;
 mod match_query;
+mod multi_match_query;
 mod one_field_map;
+mod prefix_query;
 mod range_query;
 mod term_query;
 mod terms_query;
+mod wildcard_query;
 
 use serde::Deserialize;
 use tantivy::query::Query;
@@ -23,9 +26,12 @@ pub use bool_query::BoolQuery;
 pub use exists_query::ExistsQuery;
 pub use match_phrase::MatchPhraseQuery;
 pub use match_query::MatchQuery;
+pub use multi_match_query::MultiMatchQuery;
+pub use prefix_query::PrefixQuery;
 pub use range_query::RangeQuery;
 pub use term_query::TermQuery;
 pub use terms_query::TermsQuery;
+pub use wildcard_query::WildcardQuery;
 
 /// Empty struct for match_all.
 #[derive(Debug, Clone, Deserialize)]
@@ -47,8 +53,11 @@ pub enum ElasticQueryDsl {
     Terms(TermsQuery),
     Match(MatchQuery),
     MatchPhrase(MatchPhraseQuery),
+    MultiMatch(MultiMatchQuery),
     Range(RangeQuery),
     Exists(ExistsQuery),
+    Prefix(PrefixQuery),
+    Wildcard(WildcardQuery),
     MatchAll(MatchAllQuery),
     MatchNone(MatchNoneQuery),
 }
@@ -66,8 +75,11 @@ impl ElasticQueryDsl {
             ElasticQueryDsl::Terms(q) => q.compile(tv_schema, app_schema),
             ElasticQueryDsl::Match(q) => q.compile(tv_schema, app_schema),
             ElasticQueryDsl::MatchPhrase(q) => q.compile(tv_schema, app_schema),
+            ElasticQueryDsl::MultiMatch(q) => q.compile(tv_schema, app_schema),
             ElasticQueryDsl::Range(q) => q.compile(tv_schema, app_schema),
             ElasticQueryDsl::Exists(q) => q.compile(tv_schema, app_schema),
+            ElasticQueryDsl::Prefix(q) => q.compile(tv_schema, app_schema),
+            ElasticQueryDsl::Wildcard(q) => q.compile(tv_schema, app_schema),
             ElasticQueryDsl::MatchAll(_) => Ok(Box::new(tantivy::query::AllQuery)),
             ElasticQueryDsl::MatchNone(_) => Ok(Box::new(tantivy::query::EmptyQuery)),
         }
