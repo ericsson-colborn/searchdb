@@ -8,6 +8,9 @@ mod es_dsl;
 #[cfg(feature = "delta")]
 mod ingest;
 mod merge_policy;
+#[cfg(feature = "delta")]
+#[allow(dead_code)]
+mod object_store_dir;
 mod pipeline;
 mod schema;
 mod searcher;

@@ -36,11 +36,17 @@ arrow-json = { version = "54", optional = true }
 # Glob pattern expansion for ingest
 glob = { version = "0.3", optional = true }
 
+# Async trait (needed for tantivy's FileHandle trait)
+async-trait = "0.1"
+
 # Async runtime (delta-rs is async)
 tokio = { version = "1", features = ["full"], optional = true }
 
 # HTTP serve
 axum = { version = "0.8", optional = true }
+
+# Object storage (S3, GCS, Azure, local) — re-uses the version from deltalake
+object_store = { version = "0.11", optional = true }
 
 # Logging
 log = "0.4"
@@ -63,7 +69,7 @@ crossbeam-channel = "0.5"
 
 [features]
 default = ["delta"]
-delta = ["dep:deltalake", "dep:arrow", "dep:parquet", "dep:tokio", "dep:glob", "dep:arrow-csv", "dep:arrow-json"]
+delta = ["dep:deltalake", "dep:arrow", "dep:parquet", "dep:tokio", "dep:glob", "dep:arrow-csv", "dep:arrow-json", "dep:object_store"]
 serve = ["dep:axum", "dep:tokio"]
 
 [dev-dependencies]
