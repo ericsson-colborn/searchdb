@@ -181,6 +181,65 @@ impl DeltaSync {
             removed_ids,
         })
     }
+
+    /// Like `changes_since`, but streams added rows through a channel instead of
+    /// materializing them all in memory. Returns removed_ids immediately.
+    #[allow(dead_code)]
+    pub async fn changes_since_streaming(
+        &self,
+        last_version: i64,
+        row_tx: crossbeam_channel::Sender<serde_json::Value>,
+    ) -> Result<Vec<String>> {
+        if last_version < 0 {
+            let table = self.open(None).await?;
+            let file_uris: Vec<String> = table
+                .get_file_uris()
+                .map_err(|e| SearchDbError::Delta(format!("failed to get file URIs: {e}")))?
+                .collect();
+            stream_parquet_files_to_channel(&file_uris, row_tx)?;
+            return Ok(vec![]);
+        }
+
+        let current = self.open(None).await?;
+        let current_files: std::collections::HashSet<String> = current
+            .get_file_uris()
+            .map_err(|e| SearchDbError::Delta(format!("failed to get file URIs: {e}")))?
+            .collect();
+
+        let prev = match self.open(Some(last_version)).await {
+            Ok(t) => t,
+            Err(_) => {
+                log::warn!(
+                    "Cannot open Delta v{last_version} (vacuumed?), falling back to full reload"
+                );
+                let file_uris: Vec<String> = current_files.into_iter().collect();
+                stream_parquet_files_to_channel(&file_uris, row_tx)?;
+                return Ok(vec![]);
+            }
+        };
+        let prev_files: std::collections::HashSet<String> = prev
+            .get_file_uris()
+            .map_err(|e| SearchDbError::Delta(format!("failed to get file URIs: {e}")))?
+            .collect();
+
+        let added: Vec<String> = current_files.difference(&prev_files).cloned().collect();
+        let removed: Vec<&String> = prev_files.difference(&current_files).collect();
+
+        // Extract IDs from removed files (returns Vec<String>, NOT Result)
+        let removed_ids = if removed.is_empty() {
+            vec![]
+        } else {
+            extract_ids_from_parquet_files(&removed)
+        };
+
+        // Stream added rows through channel
+        if !added.is_empty() {
+            stream_parquet_files_to_channel(&added, row_tx)?;
+        }
+        // row_tx dropped here, closing the channel
+
+        Ok(removed_ids)
+    }
 }
 
 /// Extract `_id` values from Parquet files (for deletion after file removal).
@@ -264,6 +323,55 @@ fn extract_ids_from_parquet_files(uris: &[impl AsRef<str>]) -> Vec<String> {
     }
 
     ids
+}
+
+/// Read Parquet files and send each row as a JSON Value through the channel.
+/// Uses `arrow::json::ArrayWriter` (same as `read_parquet_files_to_json`).
+#[allow(dead_code)]
+fn stream_parquet_files_to_channel(
+    uris: &[impl AsRef<str>],
+    tx: crossbeam_channel::Sender<serde_json::Value>,
+) -> Result<()> {
+    for uri in uris {
+        let path = strip_file_uri(uri.as_ref());
+        let file = match std::fs::File::open(&path) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("[dsrch] warning: cannot open {path}: {e}");
+                continue;
+            }
+        };
+
+        let reader = ParquetRecordBatchReaderBuilder::try_new(file)
+            .map_err(|e| SearchDbError::Delta(format!("invalid Parquet file '{path}': {e}")))?
+            .build()
+            .map_err(|e| {
+                SearchDbError::Delta(format!("failed to build Parquet reader for '{path}': {e}"))
+            })?;
+
+        for batch_result in reader {
+            let batch = batch_result.map_err(|e| {
+                SearchDbError::Delta(format!("error reading batch from '{path}': {e}"))
+            })?;
+
+            let buf = Vec::new();
+            let mut writer = ArrayWriter::new(buf);
+            writer.write_batches(&[&batch]).map_err(|e| {
+                SearchDbError::Delta(format!("error converting batch to JSON: {e}"))
+            })?;
+            writer
+                .finish()
+                .map_err(|e| SearchDbError::Delta(format!("error finishing JSON writer: {e}")))?;
+
+            let rows: Vec<serde_json::Value> = serde_json::from_slice(&writer.into_inner())?;
+            for row in rows {
+                if tx.send(row).is_err() {
+                    return Ok(()); // Receiver dropped, stop early
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Read Parquet files and convert rows to JSON values.
