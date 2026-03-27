@@ -12,5 +12,3 @@ pub mod new_index;
 pub mod reindex;
 pub mod search;
 pub mod stats;
-#[cfg(feature = "delta")]
-pub mod sync;

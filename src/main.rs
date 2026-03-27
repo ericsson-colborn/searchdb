@@ -153,13 +153,6 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Manual incremental sync from Delta Lake source
-    #[cfg(feature = "delta")]
-    Sync {
-        /// Index name
-        name: String,
-    },
-
     /// Full rebuild from Delta Lake source
     #[cfg(feature = "delta")]
     Reindex {
@@ -297,7 +290,6 @@ async fn run_cli() {
         } => {
             commands::connect_delta::run(&storage, &name, &source, schema.as_deref(), dry_run).await
         }
-        Commands::Sync { name } => commands::sync::run(&storage, &name).await,
         Commands::Reindex {
             name,
             as_of_version,
