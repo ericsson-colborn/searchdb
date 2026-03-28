@@ -64,6 +64,9 @@ chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
 
+# URL parsing for object store URIs
+url = "2"
+
 # Bounded channels for parallel pipeline
 crossbeam-channel = "0.5"
 prometheus = { version = "0.13", optional = true }

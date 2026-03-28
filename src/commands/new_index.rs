@@ -110,6 +110,7 @@ fn create_index(
         schema,
         inferred,
         delta_source: None,
+        index_store: None,
         index_version: None,
         compact: None,
     };

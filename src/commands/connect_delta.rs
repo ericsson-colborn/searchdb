@@ -75,6 +75,7 @@ pub async fn run(
         schema,
         inferred,
         delta_source: Some(source.to_string()),
+        index_store: None,
         index_version: Some(version),
         compact: None,
     };

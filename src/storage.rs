@@ -26,6 +26,11 @@ pub struct IndexConfig {
     pub inferred: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delta_source: Option<String>,
+    /// Remote storage URI for the tantivy index (e.g., "az://container/path").
+    /// When set, the index lives on object storage with local disk cache.
+    /// When absent, the index lives in the local data_dir.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_store: Option<String>,
     #[serde(
         alias = "last_indexed_version",
         skip_serializing_if = "Option::is_none"
@@ -74,6 +79,58 @@ impl Storage {
     pub fn create_dirs(&self, name: &str) -> Result<()> {
         fs::create_dir_all(self.tantivy_dir(name))?;
         Ok(())
+    }
+
+    /// Open (or create) a tantivy Index using the appropriate directory.
+    ///
+    /// If the index config has `index_store` set, uses ObjectStoreDirectory
+    /// (remote storage with local cache). Otherwise uses the local MmapDirectory.
+    #[cfg(feature = "delta")]
+    #[allow(dead_code)]
+    pub fn open_index(&self, name: &str) -> Result<tantivy::Index> {
+        let config = self.load_config(name)?;
+        if let Some(ref store_uri) = config.index_store {
+            let (store, prefix) = crate::object_store_dir::parse_object_store_uri(store_uri)
+                .map_err(|e| SearchDbError::Delta(format!("invalid index_store URI: {e}")))?;
+            let cache_dir = self.tantivy_dir(name); // local cache
+            fs::create_dir_all(&cache_dir)?;
+            let rt = tokio::runtime::Handle::current();
+            let dir =
+                crate::object_store_dir::ObjectStoreDirectory::new(store, prefix, cache_dir, rt)
+                    .map_err(SearchDbError::Io)?;
+            let index = tantivy::Index::open(dir)?;
+            Ok(index)
+        } else {
+            let index = tantivy::Index::open_in_dir(self.tantivy_dir(name))?;
+            Ok(index)
+        }
+    }
+
+    /// Create a new tantivy Index using the appropriate directory.
+    #[cfg(feature = "delta")]
+    #[allow(dead_code)]
+    pub fn create_index(
+        &self,
+        name: &str,
+        schema: tantivy::schema::Schema,
+        index_store: Option<&str>,
+    ) -> Result<tantivy::Index> {
+        if let Some(store_uri) = index_store {
+            let (store, prefix) = crate::object_store_dir::parse_object_store_uri(store_uri)
+                .map_err(|e| SearchDbError::Delta(format!("invalid index_store URI: {e}")))?;
+            let cache_dir = self.tantivy_dir(name);
+            fs::create_dir_all(&cache_dir)?;
+            let rt = tokio::runtime::Handle::current();
+            let dir =
+                crate::object_store_dir::ObjectStoreDirectory::new(store, prefix, cache_dir, rt)
+                    .map_err(SearchDbError::Io)?;
+            let index = tantivy::Index::create(dir, schema, tantivy::IndexSettings::default())?;
+            Ok(index)
+        } else {
+            self.create_dirs(name)?;
+            let index = tantivy::Index::create_in_dir(self.tantivy_dir(name), schema)?;
+            Ok(index)
+        }
     }
 
     pub fn save_config(&self, name: &str, config: &IndexConfig) -> Result<()> {
@@ -142,6 +199,7 @@ mod tests {
             schema,
             inferred: false,
             delta_source: Some("s3://bucket/labs".into()),
+            index_store: None,
             index_version: Some(42),
             compact: Some(CompactMeta {
                 segment_size: 50_000,
@@ -185,6 +243,7 @@ mod tests {
             schema,
             inferred: false,
             delta_source: None,
+            index_store: None,
             index_version: None,
             compact: None,
         };
@@ -210,6 +269,7 @@ mod tests {
             schema,
             inferred: true,
             delta_source: None,
+            index_store: None,
             index_version: None,
             compact: None,
         };

@@ -5,6 +5,21 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use object_store::ObjectStore;
+
+/// Parse an object store URI into a store + prefix.
+///
+/// Supports:
+/// - `az://container/path` or `abfss://container@account.dfs.core.windows.net/path` → Azure
+/// - `s3://bucket/path` → S3
+/// - `gs://bucket/path` → GCS
+pub fn parse_object_store_uri(
+    uri: &str,
+) -> std::result::Result<(Arc<dyn ObjectStore>, object_store::path::Path), String> {
+    let parsed_url = url::Url::parse(uri).map_err(|e| format!("invalid URI '{uri}': {e}"))?;
+    let (store, prefix) = object_store::parse_url(&parsed_url)
+        .map_err(|e| format!("failed to parse object store URI '{uri}': {e}"))?;
+    Ok((Arc::new(store), prefix))
+}
 use tantivy::directory::error::{DeleteError, OpenReadError, OpenWriteError};
 use tantivy::directory::{
     AntiCallToken, Directory, FileHandle, OwnedBytes, TerminatingWrite, WatchCallback, WatchHandle,
