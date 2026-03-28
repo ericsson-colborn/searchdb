@@ -1,5 +1,5 @@
 [package]
-name = "deltasearch"
+name = "dewey"
 version = "0.1.0"
 edition = "2021"
 description = "ES in your pocket — embedded search backed by tantivy + Delta Lake"
@@ -7,7 +7,7 @@ license = "Apache-2.0"
 repository = "https://github.com/ericsson-colborn/searchdb"
 
 [[bin]]
-name = "dsrch"
+name = "dewey"
 path = "src/main.rs"
 
 [dependencies]
