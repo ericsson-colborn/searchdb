@@ -2065,6 +2065,7 @@ dependencies = [
  "arrow-json",
  "async-trait",
  "axum",
+ "bytes",
  "chrono",
  "clap",
  "crossbeam-channel",

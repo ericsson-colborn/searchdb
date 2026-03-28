@@ -1,6 +1,11 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
+use arrow::array::RecordBatch;
 use arrow::json::ArrayWriter;
+use bytes::Bytes;
+use object_store::path::Path as StorePath;
+use object_store::ObjectStore;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use crate::error::{Result, SearchDbError};
@@ -19,11 +24,14 @@ pub struct DeltaChanges {
 
 /// Wraps a Delta table and provides load helpers for SearchDB.
 ///
+/// All file reads go through the Delta table's object store, so local,
+/// S3, Azure, and GCS URIs all work transparently.
+///
 /// Sync strategy:
-/// - Full load: read all Parquet files from the table
-/// - Incremental: diff file URIs between last_version and HEAD,
-///   read only new Parquet files, upsert their rows. Detect removed
-///   files and extract `_id` values for deletion.
+/// - Full load: DataFusion scan of the entire table
+/// - Incremental: diff file paths between last_version and HEAD,
+///   read only new Parquet files via object_store, upsert their rows.
+///   Detect removed files and extract `_id` values for deletion.
 ///
 /// Limitations:
 /// - File-level diffing: rewritten files (OPTIMIZE) are re-read, but
@@ -57,14 +65,12 @@ impl DeltaSync {
     }
 
     /// Read all rows from the Delta table, optionally at a specific version.
+    ///
+    /// Uses DataFusion to scan the table, which handles any storage backend
+    /// (local, S3, Azure, GCS) transparently.
     pub async fn full_load(&self, as_of_version: Option<i64>) -> Result<Vec<serde_json::Value>> {
         let table = self.open(as_of_version).await?;
-        let file_uris: Vec<String> = table
-            .get_file_uris()
-            .map_err(|e| SearchDbError::Delta(format!("failed to get file URIs: {e}")))?
-            .collect();
-
-        read_parquet_files_to_json(&file_uris)
+        load_table_rows(table).await
     }
 
     /// Return the Arrow schema of the Delta table.
@@ -84,7 +90,7 @@ impl DeltaSync {
 
     /// Return rows from files added between last_version and HEAD.
     ///
-    /// Uses file-level diffing: new URIs = current.file_uris() - prev.file_uris().
+    /// Uses file-level diffing: new paths = current.files - prev.files.
     /// If last_version < 0 (never synced), falls back to full_load().
     pub async fn rows_added_since(&self, last_version: i64) -> Result<Vec<serde_json::Value>> {
         if last_version < 0 {
@@ -92,9 +98,9 @@ impl DeltaSync {
         }
 
         let current = self.open(None).await?;
-        let current_files: HashSet<String> = current
-            .get_file_uris()
-            .map_err(|e| SearchDbError::Delta(format!("failed to get file URIs: {e}")))?
+        let current_files: HashSet<StorePath> = current
+            .get_files_iter()
+            .map_err(|e| SearchDbError::Delta(format!("failed to get file paths: {e}")))?
             .collect();
 
         let prev = match self.open(Some(last_version)).await {
@@ -106,17 +112,18 @@ impl DeltaSync {
                 return self.full_load(None).await;
             }
         };
-        let prev_files: HashSet<String> = prev
-            .get_file_uris()
-            .map_err(|e| SearchDbError::Delta(format!("failed to get file URIs: {e}")))?
+        let prev_files: HashSet<StorePath> = prev
+            .get_files_iter()
+            .map_err(|e| SearchDbError::Delta(format!("failed to get file paths: {e}")))?
             .collect();
 
-        let added: Vec<&String> = current_files.difference(&prev_files).collect();
+        let added: Vec<&StorePath> = current_files.difference(&prev_files).collect();
         if added.is_empty() {
             return Ok(vec![]);
         }
 
-        read_parquet_files_to_json(&added)
+        let store = current.object_store();
+        load_parquet_via_store(store.as_ref(), &added).await
     }
 
     /// Return changes between last_version and HEAD: added rows AND removed IDs.
@@ -139,9 +146,9 @@ impl DeltaSync {
         }
 
         let current = self.open(None).await?;
-        let current_files: HashSet<String> = current
-            .get_file_uris()
-            .map_err(|e| SearchDbError::Delta(format!("failed to get file URIs: {e}")))?
+        let current_files: HashSet<StorePath> = current
+            .get_files_iter()
+            .map_err(|e| SearchDbError::Delta(format!("failed to get file paths: {e}")))?
             .collect();
 
         let prev = match self.open(Some(last_version)).await {
@@ -157,25 +164,27 @@ impl DeltaSync {
                 });
             }
         };
-        let prev_files: HashSet<String> = prev
-            .get_file_uris()
-            .map_err(|e| SearchDbError::Delta(format!("failed to get file URIs: {e}")))?
+        let prev_files: HashSet<StorePath> = prev
+            .get_files_iter()
+            .map_err(|e| SearchDbError::Delta(format!("failed to get file paths: {e}")))?
             .collect();
 
         // Added files: in current but not in prev
-        let added: Vec<&String> = current_files.difference(&prev_files).collect();
+        let added: Vec<&StorePath> = current_files.difference(&prev_files).collect();
         let added_rows = if added.is_empty() {
             vec![]
         } else {
-            read_parquet_files_to_json(&added)?
+            let store = current.object_store();
+            load_parquet_via_store(store.as_ref(), &added).await?
         };
 
         // Removed files: in prev but not in current
-        let removed: Vec<&String> = prev_files.difference(&current_files).collect();
+        let removed: Vec<&StorePath> = prev_files.difference(&current_files).collect();
         let removed_ids = if removed.is_empty() {
             vec![]
         } else {
-            extract_ids_from_parquet_files(&removed)
+            let store = prev.object_store();
+            extract_ids_via_store(store.as_ref(), &removed).await
         };
 
         Ok(DeltaChanges {
@@ -193,18 +202,20 @@ impl DeltaSync {
     ) -> Result<Vec<String>> {
         if last_version < 0 {
             let table = self.open(None).await?;
-            let file_uris: Vec<String> = table
-                .get_file_uris()
-                .map_err(|e| SearchDbError::Delta(format!("failed to get file URIs: {e}")))?
+            let paths: Vec<StorePath> = table
+                .get_files_iter()
+                .map_err(|e| SearchDbError::Delta(format!("failed to get file paths: {e}")))?
                 .collect();
-            stream_parquet_files_to_channel(&file_uris, row_tx)?;
+            let store = table.object_store();
+            let refs: Vec<&StorePath> = paths.iter().collect();
+            stream_parquet_via_store(store.as_ref(), &refs, row_tx).await?;
             return Ok(vec![]);
         }
 
         let current = self.open(None).await?;
-        let current_files: std::collections::HashSet<String> = current
-            .get_file_uris()
-            .map_err(|e| SearchDbError::Delta(format!("failed to get file URIs: {e}")))?
+        let current_files: HashSet<StorePath> = current
+            .get_files_iter()
+            .map_err(|e| SearchDbError::Delta(format!("failed to get file paths: {e}")))?
             .collect();
 
         let prev = match self.open(Some(last_version)).await {
@@ -213,29 +224,34 @@ impl DeltaSync {
                 log::warn!(
                     "Cannot open Delta v{last_version} (vacuumed?), falling back to full reload"
                 );
-                let file_uris: Vec<String> = current_files.into_iter().collect();
-                stream_parquet_files_to_channel(&file_uris, row_tx)?;
+                let paths: Vec<StorePath> = current_files.into_iter().collect();
+                let store = current.object_store();
+                let refs: Vec<&StorePath> = paths.iter().collect();
+                stream_parquet_via_store(store.as_ref(), &refs, row_tx).await?;
                 return Ok(vec![]);
             }
         };
-        let prev_files: std::collections::HashSet<String> = prev
-            .get_file_uris()
-            .map_err(|e| SearchDbError::Delta(format!("failed to get file URIs: {e}")))?
+        let prev_files: HashSet<StorePath> = prev
+            .get_files_iter()
+            .map_err(|e| SearchDbError::Delta(format!("failed to get file paths: {e}")))?
             .collect();
 
-        let added: Vec<String> = current_files.difference(&prev_files).cloned().collect();
-        let removed: Vec<&String> = prev_files.difference(&current_files).collect();
+        let added: Vec<StorePath> = current_files.difference(&prev_files).cloned().collect();
+        let removed: Vec<&StorePath> = prev_files.difference(&current_files).collect();
 
-        // Extract IDs from removed files (returns Vec<String>, NOT Result)
+        // Extract IDs from removed files
         let removed_ids = if removed.is_empty() {
             vec![]
         } else {
-            extract_ids_from_parquet_files(&removed)
+            let store = prev.object_store();
+            extract_ids_via_store(store.as_ref(), &removed).await
         };
 
         // Stream added rows through channel
         if !added.is_empty() {
-            stream_parquet_files_to_channel(&added, row_tx)?;
+            let store = current.object_store();
+            let refs: Vec<&StorePath> = added.iter().collect();
+            stream_parquet_via_store(store.as_ref(), &refs, row_tx).await?;
         }
         // row_tx dropped here, closing the channel
 
@@ -243,33 +259,133 @@ impl DeltaSync {
     }
 }
 
-/// Extract `_id` values from Parquet files (for deletion after file removal).
+/// Load all rows from a DeltaTable using DataFusion (works with any storage backend).
+async fn load_table_rows(table: deltalake::DeltaTable) -> Result<Vec<serde_json::Value>> {
+    use deltalake::datafusion::prelude::SessionContext;
+
+    let ctx = SessionContext::new();
+    let df = ctx
+        .read_table(Arc::new(table))
+        .map_err(|e| SearchDbError::Delta(format!("failed to create scan: {e}")))?;
+
+    let batches: Vec<RecordBatch> = df
+        .collect()
+        .await
+        .map_err(|e| SearchDbError::Delta(format!("failed to collect results: {e}")))?;
+
+    record_batches_to_json(&batches)
+}
+
+/// Download a Parquet file from object store and return its bytes.
+async fn fetch_parquet_bytes(store: &dyn ObjectStore, path: &StorePath) -> Result<Bytes> {
+    let result = store
+        .get(path)
+        .await
+        .map_err(|e| SearchDbError::Delta(format!("failed to read '{}': {e}", path)))?;
+    let data = result
+        .bytes()
+        .await
+        .map_err(|e| SearchDbError::Delta(format!("failed to read bytes for '{}': {e}", path)))?;
+    Ok(data)
+}
+
+/// Read Parquet files via the table's object store and return all rows as JSON.
+async fn load_parquet_via_store(
+    store: &dyn ObjectStore,
+    paths: &[&StorePath],
+) -> Result<Vec<serde_json::Value>> {
+    let mut all_rows = Vec::new();
+
+    for path in paths {
+        let data = fetch_parquet_bytes(store, path).await?;
+
+        let reader = ParquetRecordBatchReaderBuilder::try_new(data)
+            .map_err(|e| SearchDbError::Delta(format!("invalid Parquet file '{}': {e}", path)))?
+            .build()
+            .map_err(|e| {
+                SearchDbError::Delta(format!(
+                    "failed to build Parquet reader for '{}': {e}",
+                    path
+                ))
+            })?;
+
+        for batch_result in reader {
+            let batch = batch_result.map_err(|e| {
+                SearchDbError::Delta(format!("error reading batch from '{}': {e}", path))
+            })?;
+            let rows = record_batches_to_json(&[batch])?;
+            all_rows.extend(rows);
+        }
+    }
+
+    Ok(all_rows)
+}
+
+/// Read Parquet files via object store and send each row through the channel.
+async fn stream_parquet_via_store(
+    store: &dyn ObjectStore,
+    paths: &[&StorePath],
+    tx: crossbeam_channel::Sender<serde_json::Value>,
+) -> Result<()> {
+    for path in paths {
+        let data = match fetch_parquet_bytes(store, path).await {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("[dsrch] warning: cannot read {}: {e}", path);
+                continue;
+            }
+        };
+
+        let reader = ParquetRecordBatchReaderBuilder::try_new(data)
+            .map_err(|e| SearchDbError::Delta(format!("invalid Parquet file '{}': {e}", path)))?
+            .build()
+            .map_err(|e| {
+                SearchDbError::Delta(format!(
+                    "failed to build Parquet reader for '{}': {e}",
+                    path
+                ))
+            })?;
+
+        for batch_result in reader {
+            let batch = batch_result.map_err(|e| {
+                SearchDbError::Delta(format!("error reading batch from '{}': {e}", path))
+            })?;
+
+            let rows = record_batches_to_json(&[batch])?;
+            for row in rows {
+                if tx.send(row).is_err() {
+                    return Ok(()); // Receiver dropped, stop early
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Extract `_id` values from Parquet files via object store (for deletion).
 ///
-/// Reads only the `_id` column from each file. If a file cannot be opened
-/// (e.g., vacuumed), logs a warning and skips it — callers should recommend
-/// `dsrch reindex` when this happens.
-fn extract_ids_from_parquet_files(uris: &[impl AsRef<str>]) -> Vec<String> {
+/// If a file cannot be read (e.g., vacuumed), logs a warning and skips it.
+async fn extract_ids_via_store(store: &dyn ObjectStore, paths: &[&StorePath]) -> Vec<String> {
     use arrow::array::{Array, AsArray};
 
     let mut ids = Vec::new();
     let mut unreadable = 0usize;
 
-    for uri in uris {
-        let path = strip_file_uri(uri.as_ref());
-        let file = match std::fs::File::open(&path) {
-            Ok(f) => f,
+    for path in paths {
+        let data = match fetch_parquet_bytes(store, path).await {
+            Ok(d) => d,
             Err(_) => {
                 unreadable += 1;
-                log::warn!("Cannot read removed file '{path}' (vacuumed?), skipping");
+                log::warn!("Cannot read removed file '{}' (vacuumed?), skipping", path);
                 continue;
             }
         };
 
-        let builder = match ParquetRecordBatchReaderBuilder::try_new(file) {
+        let builder = match ParquetRecordBatchReaderBuilder::try_new(data) {
             Ok(b) => b,
             Err(e) => {
                 unreadable += 1;
-                log::warn!("Invalid Parquet file '{path}': {e}");
+                log::warn!("Invalid Parquet file '{}': {e}", path);
                 continue;
             }
         };
@@ -278,7 +394,7 @@ fn extract_ids_from_parquet_files(uris: &[impl AsRef<str>]) -> Vec<String> {
             Ok(r) => r,
             Err(e) => {
                 unreadable += 1;
-                log::warn!("Failed to build Parquet reader for '{path}': {e}");
+                log::warn!("Failed to build Parquet reader for '{}': {e}", path);
                 continue;
             }
         };
@@ -287,12 +403,11 @@ fn extract_ids_from_parquet_files(uris: &[impl AsRef<str>]) -> Vec<String> {
             let batch = match batch_result {
                 Ok(b) => b,
                 Err(e) => {
-                    log::warn!("Error reading batch from '{path}': {e}");
+                    log::warn!("Error reading batch from '{}': {e}", path);
                     continue;
                 }
             };
 
-            // Look for the _id column
             let schema = batch.schema();
             let idx = match schema.index_of("_id") {
                 Ok(i) => i,
@@ -326,97 +441,24 @@ fn extract_ids_from_parquet_files(uris: &[impl AsRef<str>]) -> Vec<String> {
     ids
 }
 
-/// Read Parquet files and send each row as a JSON Value through the channel.
-/// Uses `arrow::json::ArrayWriter` (same as `read_parquet_files_to_json`).
-fn stream_parquet_files_to_channel(
-    uris: &[impl AsRef<str>],
-    tx: crossbeam_channel::Sender<serde_json::Value>,
-) -> Result<()> {
-    for uri in uris {
-        let path = strip_file_uri(uri.as_ref());
-        let file = match std::fs::File::open(&path) {
-            Ok(f) => f,
-            Err(e) => {
-                eprintln!("[dsrch] warning: cannot open {path}: {e}");
-                continue;
-            }
-        };
-
-        let reader = ParquetRecordBatchReaderBuilder::try_new(file)
-            .map_err(|e| SearchDbError::Delta(format!("invalid Parquet file '{path}': {e}")))?
-            .build()
-            .map_err(|e| {
-                SearchDbError::Delta(format!("failed to build Parquet reader for '{path}': {e}"))
-            })?;
-
-        for batch_result in reader {
-            let batch = batch_result.map_err(|e| {
-                SearchDbError::Delta(format!("error reading batch from '{path}': {e}"))
-            })?;
-
-            let buf = Vec::new();
-            let mut writer = ArrayWriter::new(buf);
-            writer.write_batches(&[&batch]).map_err(|e| {
-                SearchDbError::Delta(format!("error converting batch to JSON: {e}"))
-            })?;
-            writer
-                .finish()
-                .map_err(|e| SearchDbError::Delta(format!("error finishing JSON writer: {e}")))?;
-
-            let rows: Vec<serde_json::Value> = serde_json::from_slice(&writer.into_inner())?;
-            for row in rows {
-                if tx.send(row).is_err() {
-                    return Ok(()); // Receiver dropped, stop early
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Read Parquet files and convert rows to JSON values.
-///
-/// Handles `file://` URI prefix stripping for local paths.
-fn read_parquet_files_to_json(uris: &[impl AsRef<str>]) -> Result<Vec<serde_json::Value>> {
-    let mut all_rows = Vec::new();
-
-    for uri in uris {
-        let path = strip_file_uri(uri.as_ref());
-        let file = std::fs::File::open(&path)
-            .map_err(|e| SearchDbError::Delta(format!("cannot open Parquet file '{path}': {e}")))?;
-
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file)
-            .map_err(|e| SearchDbError::Delta(format!("invalid Parquet file '{path}': {e}")))?;
-        let reader = builder.build().map_err(|e| {
-            SearchDbError::Delta(format!("failed to build Parquet reader for '{path}': {e}"))
-        })?;
-
-        for batch_result in reader {
-            let batch = batch_result.map_err(|e| {
-                SearchDbError::Delta(format!("error reading batch from '{path}': {e}"))
-            })?;
-
-            let buf = Vec::new();
-            let mut writer = ArrayWriter::new(buf);
-            writer.write_batches(&[&batch]).map_err(|e| {
-                SearchDbError::Delta(format!("error converting batch to JSON: {e}"))
-            })?;
-            writer
-                .finish()
-                .map_err(|e| SearchDbError::Delta(format!("error finishing JSON writer: {e}")))?;
-
-            let rows: Vec<serde_json::Value> = serde_json::from_slice(&writer.into_inner())?;
-            all_rows.extend(rows);
-        }
-    }
-
-    Ok(all_rows)
+/// Convert Arrow RecordBatches to JSON values.
+fn record_batches_to_json(batches: &[RecordBatch]) -> Result<Vec<serde_json::Value>> {
+    let buf = Vec::new();
+    let mut writer = ArrayWriter::new(buf);
+    writer
+        .write_batches(&batches.iter().collect::<Vec<_>>())
+        .map_err(|e| SearchDbError::Delta(format!("error converting batch to JSON: {e}")))?;
+    writer
+        .finish()
+        .map_err(|e| SearchDbError::Delta(format!("error finishing JSON writer: {e}")))?;
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&writer.into_inner())?;
+    Ok(rows)
 }
 
 /// Strip `file://` or `file:///` prefix from a URI to get a local path.
+#[cfg(test)]
 fn strip_file_uri(uri: &str) -> String {
     if let Some(rest) = uri.strip_prefix("file://") {
-        // On Unix, file:///foo → /foo (strip first two slashes of file://, path starts with /)
         rest.to_string()
     } else {
         uri.to_string()
@@ -430,7 +472,6 @@ mod tests {
     use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
     use deltalake::operations::create::CreateBuilder;
     use deltalake::DeltaOps;
-    use std::sync::Arc;
 
     #[test]
     fn test_strip_file_uri() {

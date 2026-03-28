@@ -48,6 +48,9 @@ axum = { version = "0.8", optional = true }
 # Object storage (S3, GCS, Azure, local) — re-uses the version from deltalake
 object_store = { version = "0.11", optional = true }
 
+# Byte buffers (needed for Parquet ChunkReader from object_store bytes)
+bytes = { version = "1", optional = true }
+
 # Logging
 log = "0.4"
 env_logger = "0.11"
@@ -73,7 +76,7 @@ prometheus = { version = "0.13", optional = true }
 
 [features]
 default = ["delta"]
-delta = ["dep:deltalake", "dep:arrow", "dep:parquet", "dep:tokio", "dep:glob", "dep:arrow-csv", "dep:arrow-json", "dep:object_store"]
+delta = ["dep:deltalake", "dep:arrow", "dep:parquet", "dep:tokio", "dep:glob", "dep:arrow-csv", "dep:arrow-json", "dep:object_store", "dep:bytes"]
 serve = ["dep:axum", "dep:tokio"]
 metrics = ["dep:prometheus", "dep:axum", "dep:tokio"]
 
