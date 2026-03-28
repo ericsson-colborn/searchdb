@@ -604,6 +604,22 @@ mod tests {
         DeltaOps(table).write(vec![batch]).await.unwrap();
     }
 
+    /// Test helper: create an index and attach a Delta source.
+    /// Replaces the old `connect_delta::run()` call in tests.
+    fn create_index_with_delta(storage: &crate::storage::Storage, name: &str, delta_path: &str) {
+        crate::commands::new_index::run(
+            storage,
+            name,
+            Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
+            false,
+            false,
+        )
+        .unwrap();
+        let mut config = storage.load_config(name).unwrap();
+        config.delta_source = Some(delta_path.to_string());
+        storage.save_config(name, &config).unwrap();
+    }
+
     #[tokio::test]
     async fn test_compact_once_creates_segments() {
         let dir = tempfile::tempdir().unwrap();
@@ -615,19 +631,7 @@ mod tests {
         create_delta_table(delta_str, &[("d1", "glucose", 100.0), ("d2", "a1c", 5.7)]).await;
 
         let storage = crate::storage::Storage::new(data_str);
-        crate::commands::connect_delta::run(
-            &storage,
-            "lab",
-            delta_str,
-            Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
-            false,
-        )
-        .await
-        .unwrap();
-
-        let index = tantivy::Index::open_in_dir(storage.tantivy_dir("lab")).unwrap();
-        let reader = index.reader().unwrap();
-        assert_eq!(reader.searcher().num_docs(), 2);
+        create_index_with_delta(&storage, "lab", delta_str);
 
         append_to_delta(
             delta_str,
@@ -674,15 +678,18 @@ mod tests {
         create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
 
         let storage = crate::storage::Storage::new(data_str);
-        crate::commands::connect_delta::run(
-            &storage,
-            "lab",
-            delta_str,
-            Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
-            false,
-        )
-        .await
-        .unwrap();
+        create_index_with_delta(&storage, "lab", delta_str);
+
+        // Initial load via compact
+        {
+            let opts = CompactOptions {
+                once: true,
+                ..CompactOptions::default()
+            };
+            let worker = CompactWorker::new(&storage, "lab", opts);
+            let (_tx, rx) = tokio::sync::watch::channel(false);
+            worker.run(rx).await.unwrap();
+        }
 
         for i in 2..=6 {
             append_to_delta(delta_str, &[(&format!("d{i}"), "test", i as f64)]).await;
@@ -731,15 +738,7 @@ mod tests {
         create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
 
         let storage = crate::storage::Storage::new(data_str);
-        crate::commands::connect_delta::run(
-            &storage,
-            "lab",
-            delta_str,
-            Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
-            false,
-        )
-        .await
-        .unwrap();
+        create_index_with_delta(&storage, "lab", delta_str);
 
         append_to_delta(delta_str, &[("d1", "glucose_updated", 200.0)]).await;
 
@@ -779,15 +778,7 @@ mod tests {
         create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
 
         let storage = crate::storage::Storage::new(data_str);
-        crate::commands::connect_delta::run(
-            &storage,
-            "lab",
-            delta_str,
-            Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
-            false,
-        )
-        .await
-        .unwrap();
+        create_index_with_delta(&storage, "lab", delta_str);
 
         let index = tantivy::Index::open_in_dir(storage.tantivy_dir("lab")).unwrap();
         let _writer: tantivy::IndexWriter<tantivy::TantivyDocument> =
@@ -820,15 +811,7 @@ mod tests {
         create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
 
         let storage = crate::storage::Storage::new(data_str);
-        crate::commands::connect_delta::run(
-            &storage,
-            "lab",
-            delta_str,
-            Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
-            false,
-        )
-        .await
-        .unwrap();
+        create_index_with_delta(&storage, "lab", delta_str);
 
         // Run compact in continuous mode but immediately signal shutdown
         let opts = CompactOptions {
@@ -876,17 +859,19 @@ mod tests {
         )
         .await;
 
-        // Connect and initial load
+        // Create index and attach Delta source, then initial load via compact
         let storage = crate::storage::Storage::new(data_str);
-        crate::commands::connect_delta::run(
-            &storage,
-            "lab",
-            delta_str,
-            Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
-            false,
-        )
-        .await
-        .unwrap();
+        create_index_with_delta(&storage, "lab", delta_str);
+
+        {
+            let opts = CompactOptions {
+                once: true,
+                ..CompactOptions::default()
+            };
+            let worker = CompactWorker::new(&storage, "lab", opts);
+            let (_tx, rx) = tokio::sync::watch::channel(false);
+            worker.run(rx).await.unwrap();
+        }
 
         // Verify all 3 docs are indexed
         let index = tantivy::Index::open_in_dir(storage.tantivy_dir("lab")).unwrap();
@@ -942,17 +927,19 @@ mod tests {
         // Create Delta table with 2 rows
         create_delta_table(delta_str, &[("d1", "glucose", 100.0), ("d2", "a1c", 5.7)]).await;
 
-        // Connect and initial load
+        // Create index and attach Delta source, then initial load via compact
         let storage = crate::storage::Storage::new(data_str);
-        crate::commands::connect_delta::run(
-            &storage,
-            "lab",
-            delta_str,
-            Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
-            false,
-        )
-        .await
-        .unwrap();
+        create_index_with_delta(&storage, "lab", delta_str);
+
+        {
+            let opts = CompactOptions {
+                once: true,
+                ..CompactOptions::default()
+            };
+            let worker = CompactWorker::new(&storage, "lab", opts);
+            let (_tx, rx) = tokio::sync::watch::channel(false);
+            worker.run(rx).await.unwrap();
+        }
 
         // Verify 2 docs indexed
         let index = tantivy::Index::open_in_dir(storage.tantivy_dir("lab")).unwrap();

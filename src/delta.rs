@@ -756,17 +756,30 @@ mod tests {
         // Create Delta table with initial data
         create_delta_table(delta_str, &[("d1", "glucose", 100.0)]).await;
 
-        // Connect — full load into tantivy index
+        // Create index, attach Delta source, and initial load via librarian
         let storage = crate::storage::Storage::new(index_str);
-        crate::commands::connect_delta::run(
+        crate::commands::new_index::run(
             &storage,
             "test",
-            delta_str,
             Some(r#"{"fields":{"name":"keyword","value":"numeric"}}"#),
             false,
+            false,
         )
-        .await
         .unwrap();
+        let mut config = storage.load_config("test").unwrap();
+        config.delta_source = Some(delta_str.to_string());
+        storage.save_config("test", &config).unwrap();
+
+        // Run librarian once to do initial load
+        {
+            let opts = crate::compact::CompactOptions {
+                once: true,
+                ..crate::compact::CompactOptions::default()
+            };
+            let worker = crate::compact::CompactWorker::new(&storage, "test", opts);
+            let (_tx, rx) = tokio::sync::watch::channel(false);
+            worker.run(rx).await.unwrap();
+        }
 
         // Verify initial search works
         let config = storage.load_config("test").unwrap();

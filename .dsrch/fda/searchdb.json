@@ -1,0 +1,27 @@
+{
+  "schema": {
+    "fields": {
+      "companynumb": "text",
+      "duplicate": "keyword",
+      "fulfillexpeditecriteria": "keyword",
+      "occurcountry": "text",
+      "primarysourcecountry": "keyword",
+      "receiptdate": "keyword",
+      "receiptdateformat": "keyword",
+      "receivedate": "keyword",
+      "receivedateformat": "keyword",
+      "reporttype": "keyword",
+      "safetyreportid": "keyword",
+      "safetyreportversion": "keyword",
+      "serious": "keyword",
+      "seriousnessdeath": "keyword",
+      "seriousnessdisabling": "keyword",
+      "seriousnesshospitalization": "keyword",
+      "seriousnesslifethreatening": "keyword",
+      "seriousnessother": "keyword",
+      "transmissiondate": "keyword",
+      "transmissiondateformat": "keyword"
+    }
+  },
+  "inferred": true
+}
