@@ -1384,6 +1384,45 @@ mod tests {
         }
     }
 
+    // --- Multi-match positional search tests ---
+
+    #[test]
+    fn test_search_multi_match_positional() {
+        // Positional query without field qualifiers should multi-match across all fields
+        let dir = tempfile::tempdir().unwrap();
+        let (index, schema, _) = setup_test_index(dir.path());
+
+        // "blood" appears in notes of d1 ("fasting blood sample")
+        // QueryParser with all default fields searches keyword + text fields
+        let results = search(&index, &schema, "blood", 10, 0, None, false, None).unwrap();
+        assert!(!results.is_empty());
+        assert!(results.iter().any(|h| h.doc["_id"] == "d1"));
+    }
+
+    #[test]
+    fn test_search_multi_match_keyword_field() {
+        // Positional query matching a keyword field value
+        let dir = tempfile::tempdir().unwrap();
+        let (index, schema, _) = setup_test_index(dir.path());
+
+        // "glucose" is a keyword value in the name field
+        let results = search(&index, &schema, "glucose", 10, 0, None, false, None).unwrap();
+        assert_eq!(results.len(), 2); // d1 and d3 both have name=glucose
+    }
+
+    #[test]
+    fn test_search_composed_query_and_filter() {
+        // Simulate the CLI composition: positional query AND filter
+        let dir = tempfile::tempdir().unwrap();
+        let (index, schema, _) = setup_test_index(dir.path());
+
+        // Compose like the CLI does: "(glucose) AND (+notes:fasting)"
+        let combined = "(glucose) AND (+notes:fasting)";
+        let results = search(&index, &schema, combined, 10, 0, None, false, None).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].doc["_id"], "d1");
+    }
+
     // --- Aggregation tests ---
 
     fn setup_agg_test_index(dir: &std::path::Path) -> (Index, Schema) {

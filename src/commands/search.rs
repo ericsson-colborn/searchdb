@@ -8,12 +8,13 @@ use crate::storage::Storage;
 use crate::OutputFormat;
 
 /// Execute a search query against an index and print results.
-/// Supports both query string (-q) and ES DSL (--dsl) modes.
+/// Supports positional query (multi-match), --filter, and --dsl modes.
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     storage: &Storage,
     name: &str,
     query: Option<&str>,
+    filter: Option<&str>,
     dsl: Option<&str>,
     limit: usize,
     offset: usize,
@@ -24,9 +25,9 @@ pub fn run(
     sort: Option<&str>,
     agg: Option<&str>,
 ) -> Result<()> {
-    if query.is_none() && dsl.is_none() {
+    if query.is_none() && filter.is_none() && dsl.is_none() {
         return Err(SearchDbError::Schema(
-            "either --query (-q) or --dsl is required".into(),
+            "provide a search query, --filter, or --dsl".into(),
         ));
     }
 
@@ -36,6 +37,14 @@ pub fn run(
 
     let config = storage.load_config(name)?;
     let index = Index::open_in_dir(storage.tantivy_dir(name))?;
+
+    // Compose positional query + filter into a single query string
+    let combined = match (query, filter) {
+        (Some(q), Some(f)) => Some(format!("({q}) AND ({f})")),
+        (Some(q), None) => Some(q.to_string()),
+        (None, Some(f)) => Some(f.to_string()),
+        (None, None) => None,
+    };
 
     let results = if let Some(dsl_input) = dsl {
         let dsl_json = resolve_dsl_input(dsl_input)?;
@@ -51,7 +60,7 @@ pub fn run(
             sort,
         )?
     } else {
-        let query_str = query.expect("query or dsl must be provided");
+        let query_str = combined.as_deref().expect("guarded above");
         searcher::search_with_gap(
             &index,
             &config.schema,
@@ -70,7 +79,7 @@ pub fn run(
     // Run aggregations if requested
     if let Some(agg_json) = agg {
         let agg_input = resolve_dsl_input(agg_json)?;
-        let tantivy_query = build_query(&index, &config.schema, query, dsl)?;
+        let tantivy_query = build_query(&index, &config.schema, combined.as_deref(), dsl)?;
         let agg_results = searcher::aggregate(&index, tantivy_query.as_ref(), &agg_input)?;
         println!();
         println!("{}", serde_json::to_string_pretty(&agg_results)?);

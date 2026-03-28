@@ -103,18 +103,20 @@ enum Commands {
         file: Option<String>,
     },
 
-    /// Search an index with a query string or ES DSL
+    /// Search an index
     Search {
         /// Index name
         name: String,
-        /// Tantivy query string (Lucene-like syntax)
-        #[arg(short, long, conflicts_with = "dsl")]
+        /// Search query (multi-match across all fields). Positional.
         query: Option<String>,
+        /// Tantivy filter syntax (e.g., '+field:value -field:value')
+        #[arg(short = 'f', long = "filter")]
+        filter: Option<String>,
         /// Elasticsearch query DSL (JSON string, @file, or - for stdin)
-        #[arg(long, conflicts_with = "query")]
+        #[arg(long, conflicts_with_all = ["query", "filter"])]
         dsl: Option<String>,
         /// Maximum number of results
-        #[arg(long, default_value_t = 20)]
+        #[arg(short = 'l', long, default_value_t = 20)]
         limit: usize,
         /// Skip first N results (pagination)
         #[arg(long, default_value_t = 0)]
@@ -122,12 +124,12 @@ enum Commands {
         /// Comma-separated list of fields to return
         #[arg(long, value_delimiter = ',')]
         fields: Option<Vec<String>>,
+        /// Sort by field (e.g., "views", "views:asc", "published:desc")
+        #[arg(short = 's', long)]
+        sort: Option<String>,
         /// Include relevance score in output
         #[arg(long, default_value_t = false)]
         score: bool,
-        /// Sort by field (e.g., "views", "views:asc", "published:desc"). Default order: desc.
-        #[arg(long)]
-        sort: Option<String>,
         /// Aggregation request JSON (ES-compatible, e.g. '{"by_status": {"terms": {"field": "status"}}}')
         #[arg(long)]
         agg: Option<String>,
@@ -257,12 +259,13 @@ async fn run_cli() {
         Commands::Search {
             name,
             query,
+            filter,
             dsl,
             limit,
             offset,
             fields,
-            score,
             sort,
+            score,
             agg,
         } => {
             let (gap_rows, _) = read_gap(&storage, &name).await;
@@ -270,6 +273,7 @@ async fn run_cli() {
                 &storage,
                 &name,
                 query.as_deref(),
+                filter.as_deref(),
                 dsl.as_deref(),
                 limit,
                 offset,
@@ -446,17 +450,19 @@ fn run_cli_sync() {
         Commands::Search {
             name,
             query,
+            filter,
             dsl,
             limit,
             offset,
             fields,
-            score,
             sort,
+            score,
             agg,
         } => commands::search::run(
             &storage,
             &name,
             query.as_deref(),
+            filter.as_deref(),
             dsl.as_deref(),
             limit,
             offset,
