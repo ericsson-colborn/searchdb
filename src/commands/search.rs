@@ -143,7 +143,9 @@ fn print_results(results: &[searcher::SearchHit], fmt: OutputFormat) -> Result<(
             if results.is_empty() {
                 return Ok(());
             }
-            let first = results[0].doc.as_object().unwrap();
+            let first = results[0].doc.as_object().ok_or_else(|| {
+                SearchDbError::Schema("search result is not a JSON object".into())
+            })?;
             let cols: Vec<&String> = first.keys().collect();
 
             let header: Vec<String> = cols.iter().map(|c| c.to_string()).collect();
@@ -158,7 +160,9 @@ fn print_results(results: &[searcher::SearchHit], fmt: OutputFormat) -> Result<(
             );
 
             for hit in results {
-                let obj = hit.doc.as_object().unwrap();
+                let obj = hit.doc.as_object().ok_or_else(|| {
+                    SearchDbError::Schema("search result is not a JSON object".into())
+                })?;
                 let row: Vec<String> = cols
                     .iter()
                     .map(|c| match obj.get(*c) {

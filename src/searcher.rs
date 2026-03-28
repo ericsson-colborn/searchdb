@@ -516,7 +516,12 @@ fn doc_to_hit(
         if include_score {
             obj.insert(
                 "_score".to_string(),
-                serde_json::Value::Number(serde_json::Number::from_f64(score as f64).unwrap()),
+                serde_json::Value::Number(
+                    serde_json::Number::from_f64(score as f64).unwrap_or_else(|| {
+                        serde_json::Number::from_f64(0.0)
+                            .expect("0.0 is always a valid f64 for JSON")
+                    }),
+                ),
             );
         }
     }
