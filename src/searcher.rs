@@ -58,6 +58,11 @@ fn execute_query(
     sort: Option<&str>,
     app_schema: &Schema,
 ) -> Result<Vec<SearchHit>> {
+    // TopDocs requires limit > 0; when no docs are needed, short-circuit.
+    if limit == 0 {
+        return Ok(vec![]);
+    }
+
     let tv_schema = index.schema();
     let reader = index
         .reader()
@@ -728,6 +733,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(offset.len(), 1);
+    }
+
+    #[test]
+    fn test_search_limit_zero_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let (index, schema, _) = setup_test_index(dir.path());
+
+        // limit=0 should return empty results without panicking
+        let zero = search(
+            &index,
+            &schema,
+            "+__present__:__all__",
+            0,
+            0,
+            None,
+            false,
+            None,
+        )
+        .unwrap();
+        assert!(zero.is_empty());
     }
 
     #[test]
