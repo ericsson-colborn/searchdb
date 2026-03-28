@@ -1,20 +1,21 @@
-# deltasearch Product Requirements
+# Dewey Product Requirements
 
-This is the canonical source of truth for what deltasearch needs to do and how we measure success. Everything else — CLAUDE.md, README, GitHub issues — derives from this document.
+This is the canonical source of truth for what Dewey needs to do and how we measure success. Everything else — CLAUDE.md, README, GitHub issues — derives from this document.
 
 ## Product Vision
 
-DuckDB proved you don't need a data warehouse server. deltasearch proves you don't need a search cluster.
+DuckDB proved you don't need a data warehouse server. Dewey proves you don't need a search cluster.
 
-For teams with data in a lakehouse, deltasearch lets you search your lake directly. Delta Lake is the source of truth. The index is incrementally hydrated from it — a persistent asset that stays fresh via streaming compaction. No cluster, no daemon, no JVM. Single binary, zero config.
+For teams with data in a lakehouse, Dewey lets you search your lake directly. Delta Lake is the source of truth. The index is incrementally hydrated from it — a persistent asset that stays fresh via streaming compaction. No cluster, no daemon, no JVM. Single binary, zero config.
 
 ## UX Principle
 
-**Zero to hero in 60 seconds.** A new user can create an index, connect a Delta source, start the compaction worker, and run their first search in under a minute. Adoption and ease of use are the priority at this stage. Every command should have sensible defaults. No config files, no YAML, no setup wizards. If a user has to read docs before their first search, we've failed.
+**Zero to hero in 60 seconds.** A new user can create an index, start the librarian, and run their first search in under a minute. Adoption and ease of use are the priority at this stage. Every command should have sensible defaults. No config files, no YAML, no setup wizards. If a user has to read docs before their first search, we've failed.
 
 ```bash
-dsrch compact labs --source s3://bucket/labs &   # creates index, infers schema, loads, polls
-dsrch search labs -q "glucose"                    # searching
+dewey create labs --source az://datalake/lab-results
+dewey librarian labs &
+dewey search labs "glucose"
 ```
 
 ## Core Invariants
@@ -45,14 +46,14 @@ See `docs/business-model.md` for the full go-to-market strategy.
 
 ### Milestone 1: "Replace ES for Read Path" (current target)
 
-A team currently using Elasticsearch for search-only (no aggregation dashboards, no ingest pipelines) can switch to deltasearch with:
+A team currently using Elasticsearch for search-only (no aggregation dashboards, no ingest pipelines) can switch to Dewey with:
 
 - [ ] **Query compatibility.** All ES DSL query types used by 80% of read-path workloads: bool, term, terms, match, match_phrase, range, exists, multi_match, wildcard, prefix. Tantivy query string as a power-user alternative.
 - [ ] **Schema compatibility.** Nested object flattening (dot notation). At least 6 field types: keyword, text, numeric (f64), date, boolean, ip.
 - [ ] **Result quality.** Sorting by field value (not just relevance). Offset/limit pagination sufficient (no scroll needed for M1).
 - [ ] **Scale.** 10M documents indexed in under 10 minutes. 100M documents indexed in under 2 hours. Bounded memory (streaming compaction, no OOM on large backfills).
 - [ ] **Freshness.** New Delta rows searchable within `poll_interval` seconds (default 10s) via compaction, or immediately via two-tier gap search.
-- [ ] **Operational simplicity.** Zero config for search. One command to connect + compact (`dsrch compact --source`). Stats command shows health.
+- [ ] **Operational simplicity.** Zero config for search. One command to create + start librarian (`dewey create --source` then `dewey librarian`). Stats command shows health.
 
 ### Milestone 2: "Production-Ready"
 
@@ -60,16 +61,16 @@ The enterprise tier from `docs/business-model.md` is deliverable:
 
 - [ ] **Object storage.** Tantivy Directory trait over S3/GCS/Azure. Index lives on blob storage, not local disk.
 - [ ] **Aggregations.** At least: terms, range, histogram, date_histogram, avg, sum, min, max, count. Enough for a basic dashboard.
-- [ ] **Monitoring.** Prometheus metrics on compact worker. Grafana dashboard template.
-- [ ] **Distribution.** GitHub Releases with prebuilt binaries. `cargo install deltasearch`. Homebrew formula.
-- [ ] **Freshness SLA tooling.** Compact worker reports gap age. Alerting when gap exceeds threshold.
+- [ ] **Monitoring.** Prometheus metrics on librarian. Grafana dashboard template.
+- [ ] **Distribution.** GitHub Releases with prebuilt binaries. `cargo install dewey`. Homebrew formula.
+- [ ] **Freshness SLA tooling.** Librarian reports gap age. Alerting when gap exceeds threshold.
 - [ ] **Drop _source.** Hydrate full documents from Delta on demand. Reduces index size by ~50%.
 
 ### Milestone 3: "Ecosystem"
 
-- [ ] **Python bindings (PyO3).** `import deltasearch` for notebook workflows.
-- [ ] **Search UI.** Preact frontend bundled in `dsrch serve`.
-- [ ] **ES API endpoint.** HTTP `_search` and `_bulk` endpoints for ES client library compatibility.	
+- [ ] **Python bindings (PyO3).** `import dewey` for notebook workflows.
+- [ ] **Search UI.** Preact frontend bundled in `dewey serve`.
+- [ ] **ES API endpoint.** HTTP `_search` and `_bulk` endpoints for ES client library compatibility.
 
 ## Elasticsearch Compatibility Matrix
 
@@ -77,7 +78,7 @@ The enterprise tier from `docs/business-model.md` is deliverable:
 
 These are the ES features we explicitly aim to support:
 
-| ES Feature | deltasearch Implementation | Status |
+| ES Feature | Dewey Implementation | Status |
 |-----------|---------------------------|--------|
 | `bool` query | `es_dsl::BoolQuery` | done |
 | `term` query | `es_dsl::TermQuery` | done |
@@ -87,29 +88,29 @@ These are the ES features we explicitly aim to support:
 | `range` query | `es_dsl::RangeQuery` | done |
 | `exists` query | `es_dsl::ExistsQuery` | done |
 | `match_all` / `match_none` | `es_dsl::MatchAllQuery` / `MatchNoneQuery` | done |
-| `multi_match` query | `es_dsl::MultiMatchQuery` | #6 |
-| `wildcard` query | `es_dsl::WildcardQuery` | #6 |
-| `prefix` query | `es_dsl::PrefixQuery` | #6 |
+| `multi_match` query | `es_dsl::MultiMatchQuery` | done |
+| `wildcard` query | `es_dsl::WildcardQuery` | done |
+| `prefix` query | `es_dsl::PrefixQuery` | done |
 | Dynamic mapping | Schema inference from data | done |
 | Keyword field | `FieldType::Keyword` (raw tokenizer) | done |
 | Text field | `FieldType::Text` (en_stem tokenizer) | done |
 | Numeric field | `FieldType::Numeric` (f64) | done |
-| Date field | `FieldType::Date` (ISO 8601) | done |
-| Boolean field | `FieldType::Boolean` | planned |
-| IP field | `FieldType::Ip` | planned |
-| Nested objects | Dot-notation flattening | #15 |
-| Sort by field | `--sort` flag | #9 |
-| `from`/`size` pagination | `--offset`/`--limit` | done |
+| Date field | `FieldType::Date` (ISO 8601 + YYYYMMDD) | done |
+| Boolean field | `FieldType::Boolean` | done |
+| IP field | `FieldType::Ip` | done |
+| Nested objects | Dot-notation flattening | done |
+| Sort by field | `--sort` / `-s` flag | done |
+| `from`/`size` pagination | `--offset`/`--limit` (`-l`) | done |
 
 ### Targeted (M2)
 
 | ES Feature | Status |
 |-----------|--------|
-| `terms` aggregation | #8 |
-| `range` aggregation | #8 |
-| `histogram` / `date_histogram` | #8 |
-| Metric aggregations (avg, sum, min, max, count) | #8 |
-| `search_after` pagination | #10 |
+| `terms` aggregation | done |
+| `range` aggregation | done |
+| `histogram` / `date_histogram` | done |
+| Metric aggregations (avg, sum, min, max, count, stats, percentiles, cardinality) | done |
+| `search_after` pagination | planned |
 | `_search` HTTP endpoint | M3 |
 
 ### Explicitly Out of Scope
@@ -128,20 +129,20 @@ These ES features we do **not** plan to implement. They're either architecturall
 | ML / anomaly detection | Out of scope entirely |
 | Security / RBAC | Handled at filesystem/blob storage ACL level |
 | Snapshot / restore | Delta IS the backup; index can be rebuilt |
-| _bulk HTTP endpoint | Indexing is done by the compaction worker from the Delta Lake source, not HTTP payloads |
+| _bulk HTTP endpoint | Indexing is done by the librarian from the Delta Lake source, not HTTP payloads |
 
 ## Performance Targets
 
 | Metric | Target | How to Measure |
 |--------|--------|---------------|
-| Index throughput | >20K docs/sec (parallel pipeline) | `dsrch compact` on local Parquet files |
-| Search latency (p50) | <10ms for 10M doc index | `dsrch search` with tantivy query string |
+| Index throughput | >20K docs/sec (parallel pipeline) | `dewey librarian` on local Parquet files |
+| Search latency (p50) | <10ms for 10M doc index | `dewey search` with tantivy query string |
 | Search latency (p99) | <100ms for 10M doc index | Same, measure across query types |
-| Memory (compaction) | <50MB heap regardless of dataset size | Monitor RSS during 10M row compact |
+| Memory (compaction) | <50MB heap regardless of dataset size | Monitor RSS during 10M row librarian run |
 | Memory (search) | <100MB heap for 10M doc index | Monitor RSS during search |
 | Index size | <2x raw data size (with _source) | Compare index dir size to source NDJSON |
 | Index size (M2) | <1x raw data size (without _source) | After #28 (drop _source) |
-| Cold start | Index 1M rows in <60 seconds | `dsrch connect-delta` on fresh index |
+| Cold start | Index 1M rows in <60 seconds | `dewey create --source` + `dewey librarian --once` on fresh index |
 | Gap freshness | Delta HEAD visible in <1 second | Two-tier search latency |
 
 ## Feature Areas & Acceptance Criteria
@@ -156,25 +157,24 @@ These ES features we do **not** plan to implement. They're either architecturall
 - TTY gets human-readable table; pipe gets NDJSON
 - Two-tier search: gap rows from Delta merged with persistent index, deduped by `_id`
 
-### Compaction
+### Compaction (Librarian)
 
-- `dsrch compact` is a long-running worker process
+- `dewey librarian` is a long-running worker process
 - Polls Delta every `--poll-interval` seconds (default 10)
 - Creates segments of `--segment-size` rows (default 10,000)
 - Merges when segment count exceeds `--max-segments` (default 10)
 - `--once` flag: one poll-segment-merge cycle, then exit
 - `--force-merge` flag: merge all segments into one, then exit
 - Graceful shutdown on SIGINT/SIGTERM
-- Single-writer lock per index (only one compact worker at a time)
+- Single-writer lock per index (only one librarian at a time)
 - Crash-safe: watermark updated only after segment commit, can be picked up seamlessly by the next worker. 0 index corruption, 100% correct search results during crash and recovery.
 - CDF-based sync: when Delta table has Change Data Feed enabled, use row-level change tracking instead of file-level diffing. Enables merge semantics — partial updates merge into existing documents instead of replacing them. (#41)
 - `--merge-mode partial|full` flag (default: partial). Partial = incoming fields merge into existing doc. Full = incoming row replaces entire doc.
 
 ### Schema
 
-- 4 field types today (keyword, text, numeric, date), expanding to 6+ (bool, ip)
-- Schema can be explicit (`--schema` JSON) or inferred from data
-- `--infer-from` samples an NDJSON file and infers types
+- 6 field types: keyword, text, numeric, date, boolean, ip
+- Schema can be explicit (`--schema` JSON) or inferred from Delta source (`--source`)
 - `--dry-run` prints inferred schema without creating index
 - Inferred schemas enable schema evolution (new fields auto-added)
 - Explicit schemas are strict (unknown fields rejected)
@@ -182,16 +182,16 @@ These ES features we do **not** plan to implement. They're either architecturall
 
 ### Ingestion
 
-- `dsrch ingest` converts raw files to Delta Lake tables
+- `dewey to-delta` converts raw files to Delta Lake tables
 - Supports NDJSON, JSON, CSV, Parquet input formats
 - Auto-detects format from file extension
 - `--mode overwrite` (default) or `--mode append`
-- Glob patterns for multi-file ingest (`--source "data/*.csv"`)
+- Glob patterns for multi-file ingest (`"data/*.csv"`)
 
 ### CLI & Output
 
-- Binary name: `dsrch`
-- Global `--data-dir` flag (default: `.dsrch/`)
+- Binary name: `dewey`
+- Global `--data-dir` flag (default: `.dewey/`, also settable via `DEWEY_DATA_DIR`)
 - Global `--output` flag: `json` or `text` (auto-detected from TTY)
 - Errors go to stderr; data goes to stdout
 - JSON errors on stderr when `--output json`
@@ -204,9 +204,9 @@ This project is designed for agentic development. The owner is the product lead;
 - **Product decisions** (what to build, priority, UX) — escalate to owner
 - **Technical decisions** (how to build, architecture, code patterns) — Claude decides, guided by CLAUDE.md coding standards
 - **GitHub issues** are the backlog. Each issue should reference this document's milestone and acceptance criteria.
-- **Plans** live in `docs/superpowers/plans/`. Each plan covers one issue or a group of related issues.
 - **CI must pass** on every merge: `cargo fmt --check` + `cargo clippy -- -D warnings` + `cargo test`
 
 ## Document History
 
+- 2026-03-28: Rebranded from deltasearch/dsrch to Dewey/dewey. Renamed compact to librarian, ingest to to-delta, connect-delta removed (use create --source).
 - 2026-03-27: Initial draft. Corrected "disposable cache" framing to "incrementally hydrated persistent asset."
